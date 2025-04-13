@@ -1,0 +1,19 @@
+
+
+
+
+domain: ""  
+tagPolicy: "latest" 
+imagePullPolicy: Always
+
+backend:
+  image: docker.io/tylergeiger/campus-connect-backend
+  service:
+    type: ClusterIP
+    port: 3000
+
+frontend:
+  image: docker.io/tylergeiger/campus-connect-frontend
+  service:
+    type: ClusterIP
+    port: 80

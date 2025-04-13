@@ -1,0 +1,6 @@
+apiVersion: v2
+name: campus-connect
+description: A Helm chart for campus-connect and its dependencies
+version: 0.1.0
+appVersion: "1.16.0"
+

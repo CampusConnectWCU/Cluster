@@ -1,0 +1,82 @@
+apiVersion: skaffold/v4beta6
+kind: Config
+metadata:
+  name: campus-connect
+
+profiles:
+  - name: dev
+    build:
+      tagPolicy:
+        customTemplate:
+          template: "dev"
+      artifacts:
+        - image: docker.io/tylergeiger/campus-connect-backend
+          context: backend
+          docker:
+            dockerfile: backend/Dockerfile.backend.dev
+          sync:
+            manual:
+              - src: "src/**/*.ts"
+                dest: "."
+        - image: docker.io/tylergeiger/campus-connect-frontend
+          context: frontend
+          docker:
+            dockerfile: frontend/Dockerfile.frontend.dev
+          sync:
+            manual:
+              - src: "src/**/*"
+                dest: "src/"
+      local:
+        push: true
+    deploy:
+      helm:
+        releases:
+          - name: campus-connect
+            chartPath: ./helm
+            valuesFiles:
+              - ./helm/values.dev.yaml
+            setValueTemplates:
+              domain: "localhost"
+              tagPolicy: "dev"
+
+  - name: prod-deploy
+    build: {}  # no build step
+    deploy:
+      helm:
+        releases:
+          - name: campus-connect
+            chartPath: ./helm
+            valuesFiles:
+              - ./helm/values.prod.yaml
+            setValueTemplates:
+              domain: '{{cmd "hostname" "-f"}}'
+              tagPolicy: "latest"
+    
+  - name: prod-push
+    build:
+      local:
+        push: true
+      tagPolicy:
+        customTemplate:
+          template: "latest"
+      artifacts:
+        - image: docker.io/tylergeiger/campus-connect-backend
+          context: backend
+          docker:
+            dockerfile: Dockerfile.backend.prod
+          sync: {}
+        - image: docker.io/tylergeiger/campus-connect-frontend
+          context: frontend
+          docker:
+            dockerfile: Dockerfile.frontend.prod
+          sync: {}
+    deploy:
+      helm:
+        releases:
+          - name: campus-connect
+            chartPath: ./helm
+            valuesFiles:
+              - ./helm/values.prod.yaml
+            setValueTemplates:
+              domain: '{{cmd "hostname" "-f"}}'
+              tagPolicy: "latest"
