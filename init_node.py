@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import logging
 import sys
 import os
@@ -27,6 +26,7 @@ EXIT_CMD_ERROR = 2
 EXIT_ARG_ERROR = 3
 EXIT_MISSING_SECRET = 4 # New exit code for missing secrets
 EXIT_USER_TIMEOUT = 5 # New exit code for user creation timeout
+EXIT_DEPENDENCY_TIMEOUT = 6 # New exit code for dependency check timeout
 
 def wait_for_user(ssh_conn, username, timeout=300, interval=10):
     """Waits for a user to exist on the remote system."""
@@ -58,6 +58,42 @@ def wait_for_user(ssh_conn, username, timeout=300, interval=10):
 
     logging.error(f"Timeout waiting for user '{username}' to be created after {timeout} seconds.")
     return False
+
+def wait_for_log_message(ssh_conn, log_file, message_pattern, timeout=600, interval=10):
+    """Waits for a specific message pattern to appear in a remote log file using grep -q."""
+    logging.info(f"Waiting for message matching '{message_pattern}' in '{log_file}' (timeout: {timeout}s)...")
+    start_time = time.time()
+    # Use single quotes around the pattern for grep
+    check_command = f"grep -q '{message_pattern}' {log_file}"
+
+    while time.time() - start_time < timeout:
+        try:
+            logging.debug(f"Executing check command: '{check_command}'")
+            # Execute the command. If grep finds the pattern (exit 0), command() should succeed.
+            # If grep doesn't find it (exit 1) or file missing (exit 2), command() might raise ExceptionPexpect.
+            ssh_conn.command(check_command, timeout=30)
+            # If we reach here, the command succeeded (exit 0), meaning grep found the pattern.
+            logging.info(f"Found message matching '{message_pattern}' in '{log_file}'.")
+            return True
+        except pssh.pexpect.exceptions.ExceptionPexpect as e:
+            # Assume this exception means grep exited non-zero (pattern not found or file missing).
+            output_before_prompt = ""
+            if hasattr(ssh_conn, 'ssh') and hasattr(ssh_conn.ssh, 'before'):
+                 output_before_prompt = ssh_conn.ssh.before.strip()
+            logging.debug(f"Log check command failed (likely pattern not found yet). Output: '{output_before_prompt}'. Retrying...")
+        except (TimeoutError, ConnectionAbortedError) as e:
+            # Handle SSH-level errors during the check
+            logging.warning(f"SSH error during log check command: {e}. Retrying...")
+        except Exception as e:
+             logging.error(f"Unexpected error during log check for '{message_pattern}' in '{log_file}': {e}", exc_info=True)
+             return False # Exit loop on unexpected error
+
+        logging.debug(f"Waiting {interval}s before next check...")
+        time.sleep(interval)
+
+    logging.error(f"Timeout waiting for message '{message_pattern}' in '{log_file}' after {timeout} seconds.")
+    return False
+
 
 def initialize_node(ip_address, is_deployed):
     """
@@ -105,6 +141,18 @@ def initialize_node(ip_address, is_deployed):
         # --- Wait for ccuser to exist ---
         if not wait_for_user(ssh_conn, "ccuser"):
             return EXIT_USER_TIMEOUT # Exit if user creation timed out
+
+        # --- Wait for install_deps.sh completion by checking its log ---
+        install_log = "/local/logs/install.log"
+        # Note: Using the literal username 'ccuser' as expected in the log message
+        completion_message = "Dependencies installed and ccuser is ready to deploy."
+        # Wait up to 10 minutes (600 seconds) for the message
+        if not wait_for_log_message(ssh_conn, install_log, completion_message, timeout=600):
+             logging.error(f"Did not find completion message in '{install_log}' within the timeout.")
+             return EXIT_DEPENDENCY_TIMEOUT # Use the specific exit code
+
+        logging.info("Dependency installation confirmed via log message.")
+
 
         # --- Run hostname command (example) ---
         hostname_command = "hostname -f"
@@ -175,4 +223,3 @@ if __name__ == "__main__":
          # Catch potential argparse errors or other unexpected issues before initialization starts
          logging.error(f"Script setup error: {e}", exc_info=True)
          sys.exit(EXIT_ARG_ERROR)
-
