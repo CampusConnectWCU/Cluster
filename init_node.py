@@ -118,10 +118,10 @@ def initialize_node(ip_address, is_deployed):
         # Combine secret exports (if any) with the script execution command
         # Use bash -c to handle the exports and script execution in the same subshell
         # Ensure proper quoting, especially around the secrets
-        full_command = f"sudo -u ccuser bash -c \"{secret_exports} bash {startup_script_path}\""
+        full_command = f"sudo -iu ccuser bash -c \"{secret_exports} bash {startup_script_path}\""
 
         logging.info(f"Executing deployment startup script as ccuser: {startup_script_path}")
-        logging.debug(f"Full command (secrets redacted for safety in debug): sudo -u ccuser -i bash -c \"... bash {startup_script_path}\"")
+        logging.debug(f"Full command (secrets redacted for safety in debug): sudo -iu ccuser bash -c \"... bash {startup_script_path}\"")
 
         # Execute the command with a longer timeout suitable for deployment
         # Note: Output might be extensive, adjust logging/handling as needed

@@ -51,5 +51,6 @@ rm get_helm.sh
 
 mkdir -p /local/logs
 chown -R ccuser:ccuser /local/logs
+chmod -R 775 /local/logs 
 
 echo "✅ Dependencies installed and $USERNAME is ready to deploy."
