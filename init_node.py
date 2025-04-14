@@ -3,6 +3,7 @@ import logging
 import sys
 import os
 import argparse
+import time # Import time module
 
 # Add powder directory to path to import ssh module
 sys.path.append(os.path.join(os.path.dirname(__file__), 'powder'))
@@ -25,6 +26,38 @@ EXIT_SSH_ERROR = 1
 EXIT_CMD_ERROR = 2
 EXIT_ARG_ERROR = 3
 EXIT_MISSING_SECRET = 4 # New exit code for missing secrets
+EXIT_USER_TIMEOUT = 5 # New exit code for user creation timeout
+
+def wait_for_user(ssh_conn, username, timeout=300, interval=10):
+    """Waits for a user to exist on the remote system."""
+    logging.info(f"Waiting for user '{username}' to be created (timeout: {timeout}s)...")
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        try:
+            # Use a simple command that succeeds if the user exists
+            check_command = f"id {username}"
+            logging.debug(f"Executing check command: '{check_command}'")
+            # Expect the prompt, indicating command finished.
+            # We don't need the output unless debugging.
+            ssh_conn.command(check_command, expectedline=ssh_conn.prompt, timeout=30)
+            # Check the output *before* the prompt for error messages
+            if "no such user" not in ssh_conn.ssh.before:
+                logging.info(f"User '{username}' found.")
+                return True
+            else:
+                logging.debug(f"User '{username}' not found yet. Output: {ssh_conn.ssh.before.strip()}")
+        except (TimeoutError, ConnectionAbortedError, pssh.pexpect.exceptions.ExceptionPexpect) as e:
+            # Handle potential errors during the check command itself
+            logging.warning(f"Error during user check command: {e}. Retrying...")
+        except Exception as e:
+             logging.error(f"Unexpected error during user check for '{username}': {e}", exc_info=True)
+             return False # Exit loop on unexpected error
+
+        logging.debug(f"Waiting {interval}s before next check...")
+        time.sleep(interval)
+
+    logging.error(f"Timeout waiting for user '{username}' to be created after {timeout} seconds.")
+    return False
 
 def initialize_node(ip_address, is_deployed):
     """
@@ -68,6 +101,10 @@ def initialize_node(ip_address, is_deployed):
         logging.info("Opening SSH connection...")
         ssh_conn.open() # This will raise exceptions on failure
         logging.info("SSH connection established.")
+
+        # --- Wait for ccuser to exist ---
+        if not wait_for_user(ssh_conn, "ccuser"):
+            return EXIT_USER_TIMEOUT # Exit if user creation timed out
 
         # --- Run hostname command (example) ---
         hostname_command = "hostname -f"
