@@ -29,10 +29,8 @@ node.addService(pg.Execute(
     command=(
         "sudo bash /local/repository/deploy_scripts/install_deps.sh"
         "&& /local/repository/deploy_scripts/profile-startup.sh"
-        # "&& sudo -u ccuser -i bash /local/repository/deploy_scripts/startup.sh"
     )
 ))
-
 
 # Print request
 pc.printRequestRSpec(request)
