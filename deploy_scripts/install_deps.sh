@@ -24,6 +24,9 @@ if ! id "$USERNAME" &>/dev/null; then
   usermod -aG sudo $USERNAME
   echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/$USERNAME
   chmod 0440 /etc/sudoers.d/$USERNAME
+  # Add /usr/local/bin to the user's PATH via .bashrc
+  echo 'export PATH=/usr/local/bin:$PATH' >> /home/$USERNAME/.bashrc
+  chown $USERNAME:$USERNAME /home/$USERNAME/.bashrc # Ensure correct ownership
 fi
 
 echo "$USERNAME:password" | chpasswd

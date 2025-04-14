@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Ensure /usr/local/bin is in the PATH
+export PATH=/usr/local/bin:$PATH
+
 LOG="/local/logs/startup.log"
 exec > >(tee -a "$LOG") 2>&1
 
