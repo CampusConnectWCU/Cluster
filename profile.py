@@ -27,8 +27,9 @@ bs.size = "20GB"
 node.addService(pg.Execute(
     shell="sh",
     command=(
-        "sudo bash /local/repository/deploy_scripts/install_deps.sh "
-        "&& sudo -u ccuser -i bash /local/repository/deploy_scripts/startup.sh"
+        "sudo bash /local/repository/deploy_scripts/install_deps.sh"
+        "&& /local/repository/deploy_scripts/profile-startup.sh"
+        # "&& sudo -u ccuser -i bash /local/repository/deploy_scripts/startup.sh"
     )
 ))
 

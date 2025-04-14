@@ -1,0 +1,50 @@
+name: Start Node and SSH into Repository
+
+on:
+  push:
+    branches:
+      - master
+      - main
+
+jobs:
+  start-node:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up CloudLab credentials
+      run: |
+        # Decode and save the PEM key from base64
+        echo "${{ secrets.CLOUDLAB_PEM_BASE64 }}" | base64 --decode > cloudlab.pem
+        chmod 600 cloudlab.pem
+
+        # Set the necessary environment variables for CloudLab
+        echo "USER=${{ secrets.CLOUDLAB_USER }}" >> $GITHUB_ENV
+        echo "PWORD=${{ secrets.CLOUDLAB_PASS }}" >> $GITHUB_ENV
+        echo "KEYPWORD=${{ secrets.CLOUDLAB_PASS }}" >> $GITHUB_ENV
+        echo "PROJECT_NAME=${{ secrets.CLOUDLAB_PROJECT_NAME }}" >> $GITHUB_ENV
+        echo "PROFILE_NAME=${{ secrets.CLOUDLAB_PROFILE_NAME }}" >> $GITHUB_ENV
+        echo "CERT=./cloudlab.pem" >> $GITHUB_ENV
+
+        echo "CloudLab environment variables set."
+
+    - name: Install necessary dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3-pip
+        pip3 install -r requirements.txt
+
+    - name: Start the Powder experiment
+      run: |
+        # Run the Python script to start the experiment using the powder/ modules
+        python3 example.py
+      env:
+        USER: ${{ secrets.CLOUDLAB_USER }}
+        PWORD: ${{ secrets.CLOUDLAB_PASS }}
+        PROJECT_NAME: ${{ secrets.CLOUDLAB_PROJECT_NAME }}
+        PROFILE_NAME: ${{ secrets.CLOUDLAB_PROFILE_NAME }}
+        CERT: ./cloudlab.pem
+        CLOUDLAB_PEM_BASE64: ${{ secrets.CLOUDLAB_PEM_BASE64 }}
+

@@ -50,6 +50,22 @@ echo "Forwarding port 9300 to expose the Keel API..."
 echo "password" | sudo -S nohup socat TCP-LISTEN:9300,fork TCP:$SERVICE_IP:9300 > /local/logs/keel.log 2>&1 &
 
 
+echo "🔒 Creating Kubernetes secret..."
+
+if [ -z "$PROD_ENCRYPTION_KEY" ] || [ -z "$PROD_REDIS_PASSWORD" ] || [ -z "$PROD_SESSION_SECRET" ]; then
+  echo "Error: Required secret environment variables are not set." >&2
+  exit 1
+fi
+
+kubectl create secret generic campus-connect-config-secrets \
+  --from-literal=ENCRYPTION_KEY="$PROD_ENCRYPTION_KEY" \
+  --from-literal=REDIS_PASSWORD="$PROD_REDIS_PASSWORD" \
+  --from-literal=SESSION_SECRET="$PROD_SESSION_SECRET" \
+  --namespace=default \
+  --dry-run=client -o yaml | kubectl apply -f - 
+
+unset PROD_ENCRYPTION_KEY PROD_REDIS_PASSWORD PROD_SESSION_SECRET
+
 echo "🚀 Deploying app with Skaffold..."
 cd /local/repository
 
