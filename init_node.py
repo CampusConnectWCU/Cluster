@@ -3,6 +3,7 @@ import sys
 import os
 import argparse
 import time # Import time module
+import subprocess
 
 # Add powder directory to path to import ssh module
 sys.path.append(os.path.join(os.path.dirname(__file__), 'powder'))
