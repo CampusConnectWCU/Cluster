@@ -201,19 +201,20 @@ def initialize_node(ip_address, is_deployed):
 
         # Use sudo -i -u ccuser to simulate login and source profile for PATH.
         # Prepend 'env' command *if* we need to pass secrets.
-        if secret_env_vars:
-            # Run bash via env to pass secrets, rely on -i for PATH and HOME
-            full_command = f"sudo -i -u ccuser env {secret_env_vars.strip()} bash {startup_script_path}"
-            debug_command = f"sudo -i -u ccuser env PROD_SESSION_SECRET=*** PROD_REDIS_PASSWORD=*** PROD_ENCRYPTION_KEY=*** bash {startup_script_path}"
-        else:
-            # If no secrets (redeployment), just run bash directly
-            full_command = f"sudo -i -u ccuser bash {startup_script_path}"
-            debug_command = full_command
+        bash_command_to_execute = f"source /home/ccuser/.profile && bash {startup_script_path}"
 
+        if secret_env_vars:
+            # Pass secrets using 'env', then execute the combined source+bash command via 'bash -c'
+            full_command = f"sudo -i -u ccuser env {secret_env_vars.strip()} bash -c '{bash_command_to_execute}'"
+            # Debug command hides secrets but shows structure
+            debug_command = f"sudo -i -u ccuser env PROD_SESSION_SECRET=*** PROD_REDIS_PASSWORD=*** PROD_ENCRYPTION_KEY=*** bash -c '{bash_command_to_execute}'"
+        else:
+            # If no secrets (redeployment), just run the source+bash command via 'bash -c'
+            full_command = f"sudo -i -u ccuser bash -c '{bash_command_to_execute}'"
+            debug_command = full_command
 
         logging.info(f"Executing deployment startup script as ccuser: {startup_script_path}")
         logging.debug(f"Full command: {debug_command}") # Log the potentially redacted command
-
 
         # Execute the command via SSH with a longer timeout
         try:
@@ -225,6 +226,12 @@ def initialize_node(ip_address, is_deployed):
             output_snippet = f"Output:\n{output.strip()[:1000]}\n..." # Log first 1000 chars
             logging.debug(f"Output snippet from startup script:\n---\n{output_snippet}\n---")
             # Add a check for common failure indicators if needed, e.g.,
+            if "minikube: command not found" in output:
+                 logging.error("Detected 'minikube: command not found' in output.")
+                 # You could try logging the PATH again here if needed:
+                 # path_check_output = ssh_conn.command("sudo -i -u ccuser env bash -c 'echo $PATH'")
+                 # logging.error(f"PATH inside sudo -i -u ccuser: {path_check_output.strip()}")
+                 return EXIT_CMD_ERROR
             # if "Error:" in output or "failed" in output.lower():
             #     logging.error("Detected potential error in startup script output.")
             #     return EXIT_CMD_ERROR

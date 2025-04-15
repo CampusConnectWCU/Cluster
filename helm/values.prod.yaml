@@ -61,8 +61,8 @@ networkPolicies:
   allowBackendEgressToDatabases:
     name: allow-backend-egress-to-databases
 
-# Add secrets section - USE A SECURE METHOD TO POPULATE THESE FOR PRODUCTION
+# Add secrets section - These will be populated by Skaffold using environment variables
 secrets:
-  encryptionKey: "replaced-with-prod-encryption-key" # Example: Generate a strong random key
-  redisPassword: "replaced-with-prod-redis-password" # Example: Generate a strong random password
-  sessionSecret: "replaced-with-prod-session-secret" # Example: Generate a strong random key
+  # encryptionKey: "placeholder" # REMOVE or comment out
+  # redisPassword: "placeholder" # REMOVE or comment out
+  # sessionSecret: "placeholder" # REMOVE or comment out
