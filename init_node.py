@@ -27,6 +27,7 @@ EXIT_ARG_ERROR = 3
 EXIT_MISSING_SECRET = 4 # New exit code for missing secrets
 EXIT_USER_TIMEOUT = 5 # New exit code for user creation timeout
 EXIT_DEPENDENCY_TIMEOUT = 6 # New exit code for dependency check timeout
+EXIT_SCRIPT_PERM_ERROR = 7 # New exit code for script permission/existence error
 
 def wait_for_user(ssh_conn, username, timeout=300, interval=10):
     """Waits for a user to exist on the remote system."""
@@ -161,16 +162,43 @@ def initialize_node(ip_address, is_deployed):
         logging.info(f"Command '{hostname_command}' executed successfully.")
         logging.info(f"Output of '{hostname_command}':\n---\n{output.strip()}\n---")
 
-        # --- Run the deployment startup script ---
+        # --- Verify startup script existence and permissions ---
         startup_script_path = "/local/repository/deploy_scripts/startup.sh"
-        # Combine secret exports (if any) with the script execution command
-        # Use bash -c to handle the exports and script execution in the same subshell
-        # Explicitly set HOME directory for ccuser
-        full_command = f"sudo -u ccuser bash -c \"export HOME=/home/ccuser; {secret_exports} bash {startup_script_path}\""
+        check_script_cmd = f"sudo -u ccuser test -x {startup_script_path}"
+        logging.info(f"Verifying script permissions: '{check_script_cmd}'")
+        try:
+            ssh_conn.command(check_script_cmd, timeout=30)
+            logging.info(f"Script '{startup_script_path}' exists and is executable by ccuser.")
+        except Exception as e:
+            logging.error(f"Script verification failed for '{startup_script_path}'. It might not exist or is not executable by ccuser. Error: {e}", exc_info=True)
+            # Log ls -l output for debugging
+            try:
+                ls_output = ssh_conn.command(f"ls -l {startup_script_path}", timeout=30)
+                logging.error(f"ls -l output: {ls_output.strip()}")
+            except Exception as ls_e:
+                logging.error(f"Could not get ls -l output for script: {ls_e}")
+            return EXIT_SCRIPT_PERM_ERROR
+
+        # --- Run the deployment startup script ---
+        # Construct environment variables string for sudo env
+        env_vars = f"HOME=/home/ccuser PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        if not is_deployed and secret_exports:
+             # Add secrets if it's the initial deployment
+             # Note: secret_exports already has "export VAR='val'; ..." format.
+             # We need to adapt it for `env`. Let's rebuild it.
+             env_vars += f" PROD_SESSION_SECRET='{session_secret}'"
+             env_vars += f" PROD_REDIS_PASSWORD='{redis_password}'"
+             env_vars += f" PROD_ENCRYPTION_KEY='{encryption_key}'"
+
+        # Use sudo -u ccuser env VAR=val ... bash script.sh
+        full_command = f"sudo -u ccuser env {env_vars} bash {startup_script_path}"
 
         logging.info(f"Executing deployment startup script as ccuser: {startup_script_path}")
-        # Update debug log message
-        logging.debug(f"Full command (secrets redacted for safety in debug): sudo -u ccuser bash -c \"export HOME=/home/ccuser; ... bash {startup_script_path}\"")
+        # Redact secrets from debug log
+        debug_env_vars = f"HOME=/home/ccuser PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        if not is_deployed and secret_exports:
+             debug_env_vars += " PROD_SESSION_SECRET=*** PROD_REDIS_PASSWORD=*** PROD_ENCRYPTION_KEY=***"
+        logging.debug(f"Full command: sudo -u ccuser env {debug_env_vars} bash {startup_script_path}")
 
         # Execute the command with a longer timeout suitable for deployment
         # Note: Output might be extensive, adjust logging/handling as needed
