@@ -215,28 +215,34 @@ def initialize_node(ip_address, is_deployed):
         logging.debug(f"Full command: {debug_command}") # Log the potentially redacted command
 
 
-        # Execute the command locally with a longer timeout
+        # Execute the command via SSH with a longer timeout
         try:
-            # Run with check=True to catch script errors (non-zero exit code)
-            # Capture output to log snippet
-            # Note: sudo -i changes the working directory to /home/ccuser initially.
-            # The startup.sh script handles cd'ing to the correct directories.
-            result = run_local_command(full_command, timeout=1800, check=True, capture_output=True)
-            logging.info(f"Deployment script '{startup_script_path}' execution finished successfully.")
-            # Log snippet of stdout/stderr
-            output_snippet = f"STDOUT:\n{result.stdout.strip()[:500]}\n...\nSTDERR:\n{result.stderr.strip()[:500]}\n..."
+            # Use ssh_conn.command instead of run_local_command
+            # Expect the default prompt ($) after the script finishes (or fails)
+            output = ssh_conn.command(full_command, timeout=1800) # e.g., 30 minutes timeout
+            logging.info(f"Deployment script '{startup_script_path}' execution finished.")
+            # Log snippet of stdout/stderr (combined in ssh_conn.command output)
+            output_snippet = f"Output:\n{output.strip()[:1000]}\n..." # Log first 1000 chars
             logging.debug(f"Output snippet from startup script:\n---\n{output_snippet}\n---")
+            # Add a check for common failure indicators if needed, e.g.,
+            # if "Error:" in output or "failed" in output.lower():
+            #     logging.error("Detected potential error in startup script output.")
+            #     return EXIT_CMD_ERROR
 
-        except subprocess.CalledProcessError as e:
-             logging.error(f"Deployment script '{startup_script_path}' failed with return code {e.returncode}.")
-             output_snippet = f"STDOUT:\n{e.stdout.strip()[:500]}\n...\nSTDERR:\n{e.stderr.strip()[:500]}\n..."
-             logging.error(f"Output snippet:\n---\n{output_snippet}\n---")
-             return EXIT_CMD_ERROR
         except TimeoutError:
-             logging.error(f"Deployment script '{startup_script_path}' timed out.")
-             return EXIT_CMD_ERROR # Or a specific timeout code if needed
+             logging.error(f"Deployment script '{startup_script_path}' timed out via SSH.")
+             return EXIT_CMD_ERROR
+        except ConnectionAbortedError:
+             logging.error(f"SSH connection aborted during deployment script execution.")
+             return EXIT_CMD_ERROR
+        except pssh.pexpect.exceptions.ExceptionPexpect as e:
+             logging.error(f"pexpect exception during deployment script execution: {e}", exc_info=True)
+             # Log output before the error if available
+             if hasattr(ssh_conn, 'ssh') and hasattr(ssh_conn.ssh, 'before'):
+                  logging.error(f"Output before pexpect error:\n{ssh_conn.ssh.before.strip()}")
+             return EXIT_CMD_ERROR
         except Exception as e:
-             logging.error(f"An unexpected error occurred during script execution: {e}", exc_info=True)
+             logging.error(f"An unexpected error occurred during script execution via SSH: {e}", exc_info=True)
              return EXIT_CMD_ERROR
 
 
