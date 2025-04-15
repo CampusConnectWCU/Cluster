@@ -15,7 +15,7 @@ echo "Startup script started at $(date)" >> "$LOG"
 
 # Add another simple log entry after PATH export
 echo "PATH should be set by caller, proceeding with script..." >> "$LOG"
-echo "Current PATH: $PATH" >> "$LOG" # Log the PATH for debugging
+# echo "Current PATH: $PATH" >> "$LOG" # Remove this line
 
 echo "🚀 Starting Minikube..." >> "$LOG" # Add explicit logging for commands
 minikube start --driver=docker

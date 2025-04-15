@@ -180,36 +180,67 @@ def initialize_node(ip_address, is_deployed):
             return EXIT_SCRIPT_PERM_ERROR
 
         # --- Run the deployment startup script ---
-        # Construct environment variables string for sudo env
-        env_vars = f"HOME=/home/ccuser PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        if not is_deployed and secret_exports:
-             # Add secrets if it's the initial deployment
-             # Note: secret_exports already has "export VAR='val'; ..." format.
-             # We need to adapt it for `env`. Let's rebuild it.
-             env_vars += f" PROD_SESSION_SECRET='{session_secret}'"
-             env_vars += f" PROD_REDIS_PASSWORD='{redis_password}'"
-             env_vars += f" PROD_ENCRYPTION_KEY='{encryption_key}'"
+        # Remove the explicit env_vars construction for PATH
+        # env_vars = f"HOME=/home/ccuser PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        secret_env_vars = "" # Still need to pass secrets if it's the initial deployment
+        if not is_deployed:
+             # Secrets still need to be passed if it's the initial deployment.
+             # sudo -i preserves some env vars, but explicitly passing is safer.
+             # We need to format them for the 'env' command used *within* the sudo -i context
+             # or find another way. Let's stick with the previous 'env' approach for secrets
+             # but remove the explicit PATH setting.
+             # Revisit this if secrets aren't passed correctly.
+             # Alternative: Write secrets to a temp file accessible by ccuser? Seems complex.
+             # Let's try passing them via 'env' still, but let -i handle PATH.
+             secret_env_vars = ""
+             if session_secret: secret_env_vars += f" PROD_SESSION_SECRET='{session_secret}'"
+             if redis_password: secret_env_vars += f" PROD_REDIS_PASSWORD='{redis_password}'"
+             if encryption_key: secret_env_vars += f" PROD_ENCRYPTION_KEY='{encryption_key}'"
 
-        # Use sudo -u ccuser env VAR=val ... bash script.sh
-        full_command = f"sudo -u ccuser env {env_vars} bash {startup_script_path}"
+
+        # Use sudo -i -u ccuser to simulate login and source profile for PATH.
+        # Prepend 'env' command *if* we need to pass secrets.
+        if secret_env_vars:
+            # Run bash via env to pass secrets, rely on -i for PATH and HOME
+            full_command = f"sudo -i -u ccuser env {secret_env_vars.strip()} bash {startup_script_path}"
+            debug_command = f"sudo -i -u ccuser env PROD_SESSION_SECRET=*** PROD_REDIS_PASSWORD=*** PROD_ENCRYPTION_KEY=*** bash {startup_script_path}"
+        else:
+            # If no secrets (redeployment), just run bash directly
+            full_command = f"sudo -i -u ccuser bash {startup_script_path}"
+            debug_command = full_command
+
 
         logging.info(f"Executing deployment startup script as ccuser: {startup_script_path}")
-        # Redact secrets from debug log
-        debug_env_vars = f"HOME=/home/ccuser PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        if not is_deployed and secret_exports:
-             debug_env_vars += " PROD_SESSION_SECRET=*** PROD_REDIS_PASSWORD=*** PROD_ENCRYPTION_KEY=***"
-        logging.debug(f"Full command: sudo -u ccuser env {debug_env_vars} bash {startup_script_path}")
+        logging.debug(f"Full command: {debug_command}") # Log the potentially redacted command
 
-        # Execute the command with a longer timeout suitable for deployment
-        # Note: Output might be extensive, adjust logging/handling as needed
-        # We expect the prompt ($) after the script finishes (or fails)
-        output = ssh_conn.command(full_command, timeout=1800) # e.g., 30 minutes timeout
-        logging.info(f"Deployment script '{startup_script_path}' execution finished.")
-        # Log only a portion of the output to avoid flooding logs, or check specific parts
-        logging.debug(f"Output snippet from startup script:\n---\n{output.strip()[:500]}\n---") # Log first 500 chars
+
+        # Execute the command locally with a longer timeout
+        try:
+            # Run with check=True to catch script errors (non-zero exit code)
+            # Capture output to log snippet
+            # Note: sudo -i changes the working directory to /home/ccuser initially.
+            # The startup.sh script handles cd'ing to the correct directories.
+            result = run_local_command(full_command, timeout=1800, check=True, capture_output=True)
+            logging.info(f"Deployment script '{startup_script_path}' execution finished successfully.")
+            # Log snippet of stdout/stderr
+            output_snippet = f"STDOUT:\n{result.stdout.strip()[:500]}\n...\nSTDERR:\n{result.stderr.strip()[:500]}\n..."
+            logging.debug(f"Output snippet from startup script:\n---\n{output_snippet}\n---")
+
+        except subprocess.CalledProcessError as e:
+             logging.error(f"Deployment script '{startup_script_path}' failed with return code {e.returncode}.")
+             output_snippet = f"STDOUT:\n{e.stdout.strip()[:500]}\n...\nSTDERR:\n{e.stderr.strip()[:500]}\n..."
+             logging.error(f"Output snippet:\n---\n{output_snippet}\n---")
+             return EXIT_CMD_ERROR
+        except TimeoutError:
+             logging.error(f"Deployment script '{startup_script_path}' timed out.")
+             return EXIT_CMD_ERROR # Or a specific timeout code if needed
+        except Exception as e:
+             logging.error(f"An unexpected error occurred during script execution: {e}", exc_info=True)
+             return EXIT_CMD_ERROR
+
 
         logging.info("Node initialization and deployment commands completed.")
-        return EXIT_SUCCESS # Return success code
+        return EXIT_SUCCESS
 
     except (ValueError, FileNotFoundError, ConnectionError, pssh.pexpect.exceptions.ExceptionPexpect) as e:
         logging.error(f"SSH connection failed: {e}", exc_info=True)
