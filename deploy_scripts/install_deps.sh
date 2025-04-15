@@ -54,6 +54,15 @@ chmod 664 /local/logs/startup.log
 echo "📦 Installing Minikube..."
 curl -LO https://github.com/kubernetes/minikube/releases/latest/download/minikube-linux-amd64
 install minikube-linux-amd64 /usr/local/bin/minikube && rm minikube-linux-amd64
+# Add verification
+echo "Verifying minikube installation..."
+ls -l /usr/local/bin/minikube
+if [ -x "/usr/local/bin/minikube" ]; then
+  echo "Minikube found and executable."
+else
+  echo "ERROR: Minikube not found or not executable at /usr/local/bin/minikube!"
+  # Optionally exit here if this is critical: exit 1
+fi
 
 echo "📦 Installing Skaffold..."
 curl -Lo skaffold https://storage.googleapis.com/skaffold/releases/latest/skaffold-linux-amd64
