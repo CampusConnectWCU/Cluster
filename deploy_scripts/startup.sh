@@ -96,7 +96,13 @@ cd /local/repository
 echo "current directory: $(pwd)"
 echo "current user: $(whoami)"
 
-skaffold deploy -p prod-deploy -v info # Output already redirected by exec
+
+echo "DEBUG: Checking secrets before Skaffold deploy:"
+echo "PROD_ENCRYPTION_KEY='${PROD_ENCRYPTION_KEY}'"
+echo "PROD_REDIS_PASSWORD='${PROD_REDIS_PASSWORD}'"
+echo "PROD_SESSION_SECRET='${PROD_SESSION_SECRET}'"
+
+skaffold deploy -p prod-deploy -v debug # Output already redirected by exec
 
 HOSTNAME=$(hostname -f)
 
