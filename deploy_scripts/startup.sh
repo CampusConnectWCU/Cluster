@@ -44,12 +44,17 @@ export TMPDIR=/var/tmp/ccuser-tmp
 # sudo chmod -R 775 /local/
 
 echo "📦 Installing Keel separately via Helm..."
-helm repo add keel https://charts.keel.sh
-helm repo update
+# Redirect stdout and stderr of helm repo commands to the log file
+helm repo add keel https://charts.keel.sh >> "$LOG" 2>&1
+helm repo update >> "$LOG" 2>&1
 cd /local/repository/helm
-helm upgrade --install keel keel/keel -n default -f keel-values.yaml
+echo "Running helm upgrade for Keel..." # Add log before helm command
+# Redirect stdout and stderr of helm upgrade command to the log file
+helm upgrade --install keel keel/keel -n default -f keel-values.yaml >> "$LOG" 2>&1
+echo "Helm upgrade command finished." # Add log after helm command
 
 echo "Waiting for the Keel deployment to become available (max 5 minutes)..."
+
 # --- Replace kubectl rollout status ---
 # kubectl rollout status deployment/keel -n default --timeout=5m
 
