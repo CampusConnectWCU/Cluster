@@ -38,9 +38,17 @@ echo "🌉 Starting Minikube tunnel..."
 # Rely on NOPASSWD for ccuser
 nohup sudo minikube tunnel > /local/logs/tunnel.log 2>&1 &
 
-echo "🔁 Starting socat port forward from 80 -> 192.168.49.2:80..."
-# Rely on NOPASSWD for ccuser
-nohup sudo socat TCP-LISTEN:80,fork TCP:192.168.49.2:80 > /local/logs/socat.log 2>&1 &
+echo "🔁 Starting socat port forwards..."
+
+# Forward external port 80 to Minikube ingress
+nohup sudo socat TCP-LISTEN:80,fork TCP:192.168.49.2:80 \
+  </dev/null >> /local/logs/socat-80.log 2>&1 &
+disown
+
+# Forward external port 9030 to Minikube service (or app) on 9030
+nohup sudo socat TCP-LISTEN:9030,fork TCP:192.168.49.2:9030 \
+  </dev/null >> /local/logs/socat-9030.log 2>&1 &
+disown
 
 echo "🐳 Configuring Docker to use Minikube's Docker daemon..."
 eval $(minikube docker-env)
@@ -135,8 +143,7 @@ echo "current user: $(whoami)"
 
 
 
-# Skaffold deploy no longer needs secrets passed via setValueTemplates
-skaffold deploy -p prod-deploy -v debug # Output already redirected by exec
+skaffold deploy -p prod-deploy -v info # Output already redirected by exec
 
 HOSTNAME=$(hostname -f)
 
