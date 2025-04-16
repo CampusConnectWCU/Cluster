@@ -51,10 +51,6 @@ profiles:
             setValueTemplates:
               domain: '{{cmd "hostname" "-f"}}'
               tagPolicy: "latest"
-              secrets:
-                encryptionKey: '{{.PROD_ENCRYPTION_KEY}}'
-                redisPassword: '{{.PROD_REDIS_PASSWORD}}'
-                sessionSecret: '{{.PROD_SESSION_SECRET}}'
     
   - name: prod-push
     build:
