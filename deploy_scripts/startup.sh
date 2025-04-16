@@ -42,7 +42,6 @@ echo "Patching ingress-nginx service type to LoadBalancer..."
 kubectl patch svc ingress-nginx-controller \
   -n ingress-nginx \
   -p '{"spec": {"type": "LoadBalancer"}}' \
-  --timeout=60s
 
 echo "Waiting for ingress-nginx controller pod to become ready..."
 kubectl wait --namespace ingress-nginx \
