@@ -144,27 +144,54 @@ def initialize_node(ip_address, is_deployed):
         if not wait_for_user(ssh_conn, "ccuser"):
             return EXIT_USER_TIMEOUT # Exit if user creation timed out
 
-        # --- Wait for install_deps.sh completion by checking its log ---
+        # --- Define commands ---
+        install_deps_script_path = "/local/repository/deploy_scripts/install_deps.sh"
+        startup_script_path = "/local/repository/deploy_scripts/startup.sh"
+
+        # Command to run install_deps.sh
+        # Needs sudo because it installs packages
+        install_deps_command = f"sudo bash {install_deps_script_path}"
+
+        # Command to run startup.sh as ccuser
+        # Use sudo -i -u ccuser to get the right environment (PATH, etc.)
+        startup_command_base = ("export PATH=/usr/local/bin:$PATH && "
+                                "source /home/ccuser/.profile && "
+                                f"bash {startup_script_path}")
+
+        if secret_env_vars: # Secrets are only needed for startup.sh via skaffold
+            startup_full_command = f"sudo -i -u ccuser env {secret_env_vars.strip()} bash -c '{startup_command_base}'"
+            startup_debug_command = f"sudo -i -u ccuser env PROD_SESSION_SECRET=*** PROD_REDIS_PASSWORD=*** PROD_ENCRYPTION_KEY=*** bash -c '{startup_command_base}'"
+        else:
+            startup_full_command = f"sudo -i -u ccuser bash -c '{startup_command_base}'"
+            startup_debug_command = startup_full_command
+
+        # --- Execute install_deps.sh ---
+        logging.info(f"Executing dependency installation script: {install_deps_script_path}")
+        logging.debug(f"Install command: {install_deps_command}")
+        try:
+            # Run as root (or user with sudo) since it installs packages
+            output_install = ssh_conn.command(install_deps_command, timeout=900) # 15 min timeout
+            logging.info(f"Dependency installation script '{install_deps_script_path}' execution finished.")
+            logging.debug(f"Output snippet from install script:\n---\n{output_install.strip()[:500]}\n---")
+        except (TimeoutError, ConnectionAbortedError, pssh.pexpect.exceptions.ExceptionPexpect) as e:
+             logging.error(f"Dependency installation script failed: {e}", exc_info=True)
+             return EXIT_CMD_ERROR
+        except Exception as e:
+             logging.error(f"An unexpected error occurred during install script execution: {e}", exc_info=True)
+             return EXIT_CMD_ERROR
+
+        # --- Wait for install_deps.sh completion message ---
         install_log = "/local/logs/install.log"
-        # Note: Using the literal username 'ccuser' as expected in the log message
         completion_message = "Dependencies installed and ccuser is ready to deploy."
-        # Wait up to 10 minutes (600 seconds) for the message
-        if not wait_for_log_message(ssh_conn, install_log, completion_message, timeout=600):
-             logging.error(f"Did not find completion message in '{install_log}' within the timeout.")
-             return EXIT_DEPENDENCY_TIMEOUT # Use the specific exit code
-
-        logging.info("Dependency installation confirmed via log message.")
-
-
-        # --- Run hostname command (example) ---
-        hostname_command = "hostname -f"
-        logging.info(f"Executing command: '{hostname_command}'")
-        output = ssh_conn.command(hostname_command, timeout=60)
-        logging.info(f"Command '{hostname_command}' executed successfully.")
-        logging.info(f"Output of '{hostname_command}':\n---\n{output.strip()}\n---")
+        if not wait_for_log_message(ssh_conn, install_log, completion_message, timeout=60): # Shorter timeout now, script should be done
+             logging.error(f"Did not find completion message in '{install_log}' after script execution.")
+             # Decide if this is fatal. Let's make it an error but proceed cautiously.
+             # return EXIT_DEPENDENCY_TIMEOUT
+             logging.warning("Proceeding despite missing confirmation message in install log.")
+        else:
+             logging.info("Dependency installation confirmed via log message.")
 
         # --- Verify startup script existence and permissions ---
-        startup_script_path = "/local/repository/deploy_scripts/startup.sh"
         check_script_cmd = f"sudo -u ccuser test -x {startup_script_path}"
         logging.info(f"Verifying script permissions: '{check_script_cmd}'")
         try:
@@ -180,61 +207,20 @@ def initialize_node(ip_address, is_deployed):
                 logging.error(f"Could not get ls -l output for script: {ls_e}")
             return EXIT_SCRIPT_PERM_ERROR
 
-        # --- Run the deployment startup script ---
-        # Remove the explicit env_vars construction for PATH
-        # env_vars = f"HOME=/home/ccuser PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        secret_env_vars = "" # Still need to pass secrets if it's the initial deployment
-        if not is_deployed:
-             # Secrets still need to be passed if it's the initial deployment.
-             # sudo -i preserves some env vars, but explicitly passing is safer.
-             # We need to format them for the 'env' command used *within* the sudo -i context
-             # or find another way. Let's stick with the previous 'env' approach for secrets
-             # but remove the explicit PATH setting.
-             # Revisit this if secrets aren't passed correctly.
-             # Alternative: Write secrets to a temp file accessible by ccuser? Seems complex.
-             # Let's try passing them via 'env' still, but let -i handle PATH.
-             secret_env_vars = ""
-             if session_secret: secret_env_vars += f" PROD_SESSION_SECRET='{session_secret}'"
-             if redis_password: secret_env_vars += f" PROD_REDIS_PASSWORD='{redis_password}'"
-             if encryption_key: secret_env_vars += f" PROD_ENCRYPTION_KEY='{encryption_key}'"
-
-
-        # Use sudo -i -u ccuser to simulate login and source profile for PATH.
-        # Prepend an explicit export of PATH so that minikube is found.
-        # Only run startup.sh, as install_deps.sh was run by profile.py and waited for.
-        bash_command_to_execute = ("export PATH=/usr/local/bin:$PATH && "
-                                   "source /home/ccuser/.profile && "
-                                   "bash /local/repository/deploy_scripts/startup.sh") # Removed install_deps.sh call
-
-        if secret_env_vars:
-            full_command = f"sudo -i -u ccuser env {secret_env_vars.strip()} bash -c '{bash_command_to_execute}'"
-            debug_command = f"sudo -i -u ccuser env PROD_SESSION_SECRET=*** PROD_REDIS_PASSWORD=*** PROD_ENCRYPTION_KEY=*** bash -c '{bash_command_to_execute}'"
-        else:
-            full_command = f"sudo -i -u ccuser bash -c '{bash_command_to_execute}'"
-            debug_command = full_command
-
+        # --- Execute startup.sh ---
         logging.info(f"Executing deployment startup script as ccuser: {startup_script_path}")
-        logging.debug(f"Full command: {debug_command}") # Log the potentially redacted command
-
-        # Execute the command via SSH with a longer timeout
+        logging.debug(f"Startup command: {startup_debug_command}")
         try:
-            # Use ssh_conn.command instead of run_local_command
-            # Expect the default prompt ($) after the script finishes (or fails)
-            output = ssh_conn.command(full_command, timeout=1800) # e.g., 30 minutes timeout
+            output_startup = ssh_conn.command(startup_full_command, timeout=1800) # 30 min timeout
             logging.info(f"Deployment script '{startup_script_path}' execution finished.")
-            # Log snippet of stdout/stderr (combined in ssh_conn.command output)
-            output_snippet = f"Output:\n{output.strip()[:1000]}\n..." # Log first 1000 chars
+            output_snippet = f"Output:\n{output_startup.strip()[:1000]}\n..."
             logging.debug(f"Output snippet from startup script:\n---\n{output_snippet}\n---")
-            # Add a check for common failure indicators if needed, e.g.,
-            if "minikube: command not found" in output:
-                 logging.error("Detected 'minikube: command not found' in output.")
-                 # You could try logging the PATH again here if needed:
+
+            if "minikube: command not found" in output_startup:
+                 logging.error("Detected 'minikube: command not found' in startup output.")
                  path_check_output = ssh_conn.command("sudo -i -u ccuser env bash -c 'echo $PATH'")
                  logging.error(f"PATH inside sudo -i -u ccuser: {path_check_output.strip()}")
                  return EXIT_CMD_ERROR
-            # if "Error:" in output or "failed" in output.lower():
-            #     logging.error("Detected potential error in startup script output.")
-            #     return EXIT_CMD_ERROR
 
         except TimeoutError:
              logging.error(f"Deployment script '{startup_script_path}' timed out via SSH.")
@@ -244,14 +230,12 @@ def initialize_node(ip_address, is_deployed):
              return EXIT_CMD_ERROR
         except pssh.pexpect.exceptions.ExceptionPexpect as e:
              logging.error(f"pexpect exception during deployment script execution: {e}", exc_info=True)
-             # Log output before the error if available
              if hasattr(ssh_conn, 'ssh') and not ssh_conn.ssh.closed:
                   logging.error(f"Output before pexpect error:\n{ssh_conn.ssh.before.strip()}")
              return EXIT_CMD_ERROR
         except Exception as e:
-             logging.error(f"An unexpected error occurred during script execution via SSH: {e}", exc_info=True)
+             logging.error(f"An unexpected error occurred during startup script execution via SSH: {e}", exc_info=True)
              return EXIT_CMD_ERROR
-
 
         logging.info("Node initialization and deployment commands completed.")
         return EXIT_SUCCESS
