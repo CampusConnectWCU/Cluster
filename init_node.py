@@ -201,7 +201,11 @@ def initialize_node(ip_address, is_deployed):
 
         # Use sudo -i -u ccuser to simulate login and source profile for PATH.
         # Prepend an explicit export of PATH so that minikube is found.
-        bash_command_to_execute = "export PATH=/usr/local/bin:$PATH && source /home/ccuser/.profile && bash /local/repository/deploy_scripts/startup.sh"
+        # Run install_deps.sh first and then startup.sh in sequence.
+        bash_command_to_execute = ("export PATH=/usr/local/bin:$PATH && "
+                                   "source /home/ccuser/.profile && "
+                                   "bash /local/repository/deploy_scripts/install_deps.sh && "
+                                   "bash /local/repository/deploy_scripts/startup.sh")
         
         if secret_env_vars:
             full_command = f"sudo -i -u ccuser env {secret_env_vars.strip()} bash -c '{bash_command_to_execute}'"
@@ -242,7 +246,7 @@ def initialize_node(ip_address, is_deployed):
         except pssh.pexpect.exceptions.ExceptionPexpect as e:
              logging.error(f"pexpect exception during deployment script execution: {e}", exc_info=True)
              # Log output before the error if available
-             if hasattr(ssh_conn, 'ssh') and hasattr(ssh_conn.ssh, 'before'):
+             if hasattr(ssh_conn, 'ssh') and not ssh_conn.ssh.closed:
                   logging.error(f"Output before pexpect error:\n{ssh_conn.ssh.before.strip()}")
              return EXIT_CMD_ERROR
         except Exception as e:
