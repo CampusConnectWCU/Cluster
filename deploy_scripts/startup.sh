@@ -1,5 +1,5 @@
 #!/bin/bash
-set
+set -e
 
 # Define LOG path early
 LOG="/local/logs/startup.log"
@@ -49,15 +49,46 @@ helm repo update
 cd /local/repository/helm
 helm upgrade --install keel keel/keel -n default -f keel-values.yaml
 
-echo "Waiting for the Keel deployment to become available..."
-kubectl rollout status deployment/keel -n default
+echo "Waiting for the Keel deployment to become available (max 5 minutes)..."
+kubectl rollout status deployment/keel -n default --timeout=5m
+echo "Keel deployment rollout status command finished." # Added log
 
+echo "Attempting to get Keel service IP..." # Added log
+SERVICE_IP="" # Initialize variable
 SERVICE_IP=$(kubectl get svc -n default keel -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+GET_SVC_EXIT_CODE=$? # Capture exit code immediately
+echo "kubectl get svc exit code: $GET_SVC_EXIT_CODE" # Added log
+
+if [ $GET_SVC_EXIT_CODE -ne 0 ]; then
+    echo "Error: Failed to get Keel service IP. Exit code: $GET_SVC_EXIT_CODE"
+    # Optionally dump service details for debugging
+    kubectl get svc keel -n default -o yaml
+    exit 1 # Explicitly exit if getting IP failed
+fi
+
+if [ -z "$SERVICE_IP" ]; then
+    echo "Error: Keel service IP is empty even though kubectl command succeeded."
+    # Optionally dump service details for debugging
+    kubectl get svc keel -n default -o yaml
+    exit 1 # Explicitly exit if IP is empty
+fi
+
+echo "Keel service IP obtained: $SERVICE_IP" # Added log
 echo "Keel is now running and available at http://$SERVICE_IP:9300"
 
-echo "Forwarding port 9300 to expose the Keel API..."
+echo "Attempting to forward port 9300 via socat..." # Added log
 # Rely on NOPASSWD for ccuser
 nohup sudo socat TCP-LISTEN:9300,fork TCP:$SERVICE_IP:9300 > /local/logs/keel.log 2>&1 &
+SOCAT_EXIT_CODE=$? # Capture exit code of starting nohup/sudo/socat
+echo "nohup sudo socat command exit code: $SOCAT_EXIT_CODE" # Added log
+# Note: This only captures the exit code of *launching* the background process.
+# If sudo fails immediately, it might be non-zero. If socat fails later, this won't show it.
+if [ $SOCAT_EXIT_CODE -ne 0 ]; then
+    echo "Warning: Failed to start socat process. Exit code: $SOCAT_EXIT_CODE. Continuing..."
+    # Decide if this should be fatal or just a warning
+fi
+
+echo "Proceeding to Skaffold deployment..." # Added log
 
 echo "🚀 Deploying app with Skaffold..."
 cd /local/repository
