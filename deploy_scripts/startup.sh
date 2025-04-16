@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set
 
 # Define LOG path early
 LOG="/local/logs/startup.log"
