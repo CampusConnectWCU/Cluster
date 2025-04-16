@@ -39,16 +39,11 @@ echo "🌉 Starting Minikube tunnel..."
 nohup sudo minikube tunnel > /local/logs/tunnel.log 2>&1 &
 
 echo "🔁 Starting socat port forwards..."
+echo "🔁 Starting socat port forward from 80 -> 192.168.49.2:80..."
+setsid sudo socat TCP-LISTEN:80,fork TCP:192.168.49.2:80 </dev/null &>> /local/logs/socat_80.log &
 
-# Forward external port 80 to Minikube ingress
-nohup sudo socat TCP-LISTEN:80,fork TCP:192.168.49.2:80 \
-  </dev/null >> /local/logs/socat-80.log 2>&1 &
-disown
-
-# Forward external port 9030 to Minikube service (or app) on 9030
-nohup sudo socat TCP-LISTEN:9030,fork TCP:192.168.49.2:9030 \
-  </dev/null >> /local/logs/socat-9030.log 2>&1 &
-disown
+echo "🔁 Starting socat port forward from 9030 -> 192.168.49.2:9030..."
+setsid sudo socat TCP-LISTEN:9030,fork TCP:192.168.49.2:9030 </dev/null &>> /local/logs/socat_9030.log &
 
 echo "🐳 Configuring Docker to use Minikube's Docker daemon..."
 eval $(minikube docker-env)
