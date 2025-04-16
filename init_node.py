@@ -160,7 +160,8 @@ def initialize_node(ip_address): # Removed is_deployed parameter
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Initialize a node via SSH.")
     parser.add_argument('--ip', required=True, help="IP address of the node to initialize.")
-    # Removed --isDeployed argument
+    # Restore --isDeployed argument
+    parser.add_argument('--isDeployed', action='store_true', help="Flag indicating the experiment was already running (currently ignored).")
 
     # Check if environment variables are set (optional but good practice)
     required_env_vars = ['USER', 'CERT', 'PROJECT_NAME', 'PROFILE_NAME',
@@ -177,7 +178,8 @@ if __name__ == "__main__":
 
     try:
         args = parser.parse_args()
-        logging.info(f"Received arguments: IP={args.ip}")
+        # Update log message to include isDeployed value
+        logging.info(f"Received arguments: IP={args.ip}, isDeployed={args.isDeployed} (isDeployed flag is currently ignored)")
         exit_code = initialize_node(args.ip) # Call without isDeployed flag
         sys.exit(exit_code)
     except Exception as e:
