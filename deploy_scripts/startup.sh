@@ -50,43 +50,44 @@ cd /local/repository/helm
 helm upgrade --install keel keel/keel -n default -f keel-values.yaml
 
 echo "Waiting for the Keel deployment to become available (max 5 minutes)..."
-kubectl rollout status deployment/keel -n default --timeout=5m
-echo "Keel deployment rollout status command finished." # Added log
+# --- Replace kubectl rollout status ---
+# kubectl rollout status deployment/keel -n default --timeout=5m
 
-echo "Attempting to get Keel service IP..." # Added log
-SERVICE_IP="" # Initialize variable
-SERVICE_IP=$(kubectl get svc -n default keel -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-GET_SVC_EXIT_CODE=$? # Capture exit code immediately
-echo "kubectl get svc exit code: $GET_SVC_EXIT_CODE" # Added log
+# --- Start Replacement Loop ---
+attempts=0
+max_attempts=30 # 30 attempts * 10 seconds = 300 seconds = 5 minutes
+deployment_name="keel"
+namespace="default"
 
-if [ $GET_SVC_EXIT_CODE -ne 0 ]; then
-    echo "Error: Failed to get Keel service IP. Exit code: $GET_SVC_EXIT_CODE"
-    # Optionally dump service details for debugging
-    kubectl get svc keel -n default -o yaml
-    exit 1 # Explicitly exit if getting IP failed
+while [ $attempts -lt $max_attempts ]; do
+    # Check if the 'Available' condition is 'True'
+    status=$(kubectl get deployment $deployment_name -n $namespace -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null)
+
+    if [ "$status" == "True" ]; then
+        echo "Deployment $deployment_name in namespace $namespace is Available."
+        break # Exit the loop successfully
+    fi
+
+    # Optional: Check for progressing status to give more feedback
+    progressing_status=$(kubectl get deployment $deployment_name -n $namespace -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}' 2>/dev/null)
+    replicas=$(kubectl get deployment $deployment_name -n $namespace -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+    target_replicas=$(kubectl get deployment $deployment_name -n $namespace -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "1")
+
+    echo "Waiting for Keel deployment... Status: $status, Progressing: $progressing_status, Replicas: ${replicas:-0}/${target_replicas:-1} (Attempt $((attempts+1))/$max_attempts)"
+    attempts=$((attempts+1))
+    sleep 10
+done
+
+if [ $attempts -eq $max_attempts ]; then
+    echo "Error: Keel deployment $deployment_name did not become available after $max_attempts attempts."
+    # Optional: Dump deployment status for debugging
+    kubectl get deployment $deployment_name -n $namespace -o yaml
+    kubectl get pods -n $namespace -l app=keel # Assuming 'app=keel' is the correct label
+    exit 1 # Exit script due to timeout
 fi
+# --- End Replacement Loop ---
 
-if [ -z "$SERVICE_IP" ]; then
-    echo "Error: Keel service IP is empty even though kubectl command succeeded."
-    # Optionally dump service details for debugging
-    kubectl get svc keel -n default -o yaml
-    exit 1 # Explicitly exit if IP is empty
-fi
-
-echo "Keel service IP obtained: $SERVICE_IP" # Added log
-echo "Keel is now running and available at http://$SERVICE_IP:9300"
-
-echo "Attempting to forward port 9300 via socat..." # Added log
-# Rely on NOPASSWD for ccuser
-nohup sudo socat TCP-LISTEN:9300,fork TCP:$SERVICE_IP:9300 > /local/logs/keel.log 2>&1 &
-SOCAT_EXIT_CODE=$? # Capture exit code of starting nohup/sudo/socat
-echo "nohup sudo socat command exit code: $SOCAT_EXIT_CODE" # Added log
-# Note: This only captures the exit code of *launching* the background process.
-# If sudo fails immediately, it might be non-zero. If socat fails later, this won't show it.
-if [ $SOCAT_EXIT_CODE -ne 0 ]; then
-    echo "Warning: Failed to start socat process. Exit code: $SOCAT_EXIT_CODE. Continuing..."
-    # Decide if this should be fatal or just a warning
-fi
+echo "Keel deployment rollout status command finished."
 
 echo "Proceeding to Skaffold deployment..." # Added log
 
