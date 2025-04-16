@@ -200,16 +200,13 @@ def initialize_node(ip_address, is_deployed):
 
 
         # Use sudo -i -u ccuser to simulate login and source profile for PATH.
-        # Prepend 'env' command *if* we need to pass secrets.
-        bash_command_to_execute = f"source /home/ccuser/.profile && bash {startup_script_path}"
-
+        # Prepend an explicit export of PATH so that minikube is found.
+        bash_command_to_execute = "export PATH=/usr/local/bin:$PATH && source /home/ccuser/.profile && bash /local/repository/deploy_scripts/startup.sh"
+        
         if secret_env_vars:
-            # Pass secrets using 'env', then execute the combined source+bash command via 'bash -c'
             full_command = f"sudo -i -u ccuser env {secret_env_vars.strip()} bash -c '{bash_command_to_execute}'"
-            # Debug command hides secrets but shows structure
             debug_command = f"sudo -i -u ccuser env PROD_SESSION_SECRET=*** PROD_REDIS_PASSWORD=*** PROD_ENCRYPTION_KEY=*** bash -c '{bash_command_to_execute}'"
         else:
-            # If no secrets (redeployment), just run the source+bash command via 'bash -c'
             full_command = f"sudo -i -u ccuser bash -c '{bash_command_to_execute}'"
             debug_command = full_command
 
