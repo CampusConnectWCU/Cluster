@@ -2,126 +2,132 @@
 import logging
 import sys
 import os
-import subprocess # Import subprocess
+import subprocess
+import time
 
+# Add powder directory to path
 sys.path.append(os.path.join(os.path.dirname(__file__), 'powder'))
 
 import powder.experiment as pexp
 
+# Configure logging for the application
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO, # Set default level to INFO for production
     format="[%(asctime)s] %(levelname)s:%(name)s:%(message)s",
     datefmt='%Y-%m-%d %H:%M:%S'
 )
+log = logging.getLogger(__name__)
 
-# Define constants for experiment details
+# Experiment and Node Configuration
 # Read from environment variables, providing defaults if necessary
-DEFAULT_PROJECT_NAME = 'YourCloudlabProject' # CHANGE THIS if not set in env
-DEFAULT_PROFILE_NAME = 'YourCloudlabProfile' # CHANGE THIS if not set in env
+DEFAULT_PROJECT_NAME = 'YourCloudlabProject' # Default if PROJECT_NAME env var is not set
+DEFAULT_PROFILE_NAME = 'YourCloudlabProfile' # Default if PROFILE_NAME env var is not set
 PROJECT_NAME = os.environ.get('PROJECT_NAME', DEFAULT_PROJECT_NAME)
 PROFILE_NAME = os.environ.get('PROFILE_NAME', DEFAULT_PROFILE_NAME)
-EXPERIMENT_NAME = 'prod' # Hardcoded experiment name
-TARGET_NODE_ID = 'deploy-node' # The node we want to interact with
+EXPERIMENT_NAME = 'prod' # Target experiment name
+TARGET_NODE_ID = 'deploy-node' # Client ID of the node to initialize
 
-# Exit codes
+# Exit Codes
 EXIT_SUCCESS = 0
-EXIT_FAILURE_STARTUP = 1 # Failed to get experiment ready
-EXIT_FAILURE_NODE_INIT = 2 # init_node.py failed
-EXIT_NODE_MISSING = 3 # Target node not found in ready experiment
+EXIT_FAILURE_STARTUP = 1
+EXIT_FAILURE_NODE_INIT = 2
+EXIT_NODE_MISSING = 3
 
 def run_experiment_lifecycle():
     """
-    Ensures the 'prod' experiment is running and ready, then calls init_node.py,
-    passing a flag if the experiment was already deployed.
+    Manages the Powder experiment lifecycle: ensures the experiment is ready
+    and then executes the node initialization script, indicating if the
+    experiment was pre-existing.
     """
-    logging.info(f"Starting experiment lifecycle for '{EXPERIMENT_NAME}'...")
-    logging.info(f"Using Project: {PROJECT_NAME}, Profile: {PROFILE_NAME}")
+    log.info(f"Starting experiment lifecycle for '{EXPERIMENT_NAME}' (Project: {PROJECT_NAME}, Profile: {PROFILE_NAME})")
 
     exp = pexp.PowderExperiment(experiment_name=EXPERIMENT_NAME,
                                 project_name=PROJECT_NAME,
                                 profile_name=PROFILE_NAME)
 
-    # Check initial status BEFORE trying to start/wait
+    # Determine if the experiment might already be running or provisioning
     initial_status = exp.check_status()
     was_already_deployed = initial_status in [
         pexp.PowderExperiment.EXPERIMENT_READY,
         pexp.PowderExperiment.EXPERIMENT_PROVISIONING,
         pexp.PowderExperiment.EXPERIMENT_PROVISIONED
     ]
-    logging.info(f"Initial experiment status: {initial_status}. Was already deployed: {was_already_deployed}")
+    log.info(f"Initial experiment status: {initial_status}. Pre-existing: {was_already_deployed}")
 
-    # Ensure the experiment is ready (starts if needed, waits if provisioning)
+    # Ensure the experiment reaches the READY state
     exp_status = exp.start_and_wait()
 
     if exp_status != exp.EXPERIMENT_READY:
-        logging.error(f"Experiment '{EXPERIMENT_NAME}' did not become ready. Final status: {exp_status}")
-        # No need to terminate here, start_and_wait handles failure logging
-        # Termination happens in finally block if needed
+        log.error(f"Experiment '{EXPERIMENT_NAME}' failed to reach READY state. Final status: {exp_status}")
         sys.exit(EXIT_FAILURE_STARTUP)
 
-    logging.info(f"Experiment '{EXPERIMENT_NAME}' is READY.")
+    log.info(f"Experiment '{EXPERIMENT_NAME}' is READY.")
 
-    # Check if the target node exists
+    # Verify the target node exists within the ready experiment
     if TARGET_NODE_ID not in exp.nodes:
-        logging.error(f"Target node '{TARGET_NODE_ID}' not found in experiment '{EXPERIMENT_NAME}'. Nodes found: {list(exp.nodes.keys())}")
-        # Terminate if the required node is missing
+        log.error(f"Target node '{TARGET_NODE_ID}' not found in experiment '{EXPERIMENT_NAME}'. Available nodes: {list(exp.nodes.keys())}")
+        # Attempt termination if the required node is missing
         try:
+            log.warning(f"Terminating experiment '{EXPERIMENT_NAME}' due to missing target node '{TARGET_NODE_ID}'.")
             exp.terminate()
         except Exception as term_err:
-            logging.error(f"Error during termination after node missing: {term_err}")
+            log.error(f"Error during termination after node missing: {term_err}")
         sys.exit(EXIT_NODE_MISSING)
 
     target_node = exp.nodes[TARGET_NODE_ID]
     node_ip = target_node.ip_address
-    logging.info(f"Found target node '{TARGET_NODE_ID}' with IP: {node_ip}")
+    log.info(f"Target node '{TARGET_NODE_ID}' found with IP: {node_ip}")
 
-    # --- Execute init_node.py ---
+    # Execute the node initialization script
     init_script_path = os.path.join(os.path.dirname(__file__), 'init_node.py')
-    logging.info(f"Preparing to execute node initialization script: {init_script_path} for IP {node_ip}")
+    log.info(f"Executing node initialization script: {init_script_path} on {node_ip}")
 
-    # Build the command list for subprocess
     command_list = [sys.executable, init_script_path, '--ip', node_ip]
     if was_already_deployed:
-        logging.info("Adding --isDeployed flag as experiment was already running.")
+        log.info("Passing --isDeployed flag to initialization script.")
         command_list.append('--isDeployed')
-    else:
-        logging.info("Not adding --isDeployed flag as experiment was started fresh.")
+    # Add --debug flag to init_node.py if this script's logger is set to DEBUG
+    if log.isEnabledFor(logging.DEBUG):
+        command_list.append('--debug')
 
-    logging.info(f"Executing command: {' '.join(command_list)}")
+
+    log.debug(f"Executing command: {' '.join(command_list)}")
 
     try:
-        # Pass IP and potentially the flag as command line arguments
+        # Run init_node.py as a subprocess
         process = subprocess.run(
-            command_list, # Use the constructed list
+            command_list,
             capture_output=True,
             text=True,
-            check=True, # Raise CalledProcessError if script returns non-zero exit code
-            timeout=300 # Add a timeout (e.g., 5 minutes)
+            check=True, # Raise error on non-zero exit code
+            timeout=2100 # 35 minutes timeout (covers install + startup)
         )
-        logging.info(f"init_node.py stdout:\n{process.stdout}")
-        logging.info(f"init_node.py stderr:\n{process.stderr}")
-        logging.info("Node initialization script completed successfully.")
+        # Log script output only if it succeeded but produced output
+        if process.stdout:
+            log.info(f"init_node.py stdout:\n{process.stdout.strip()}")
+        if process.stderr:
+            log.info(f"init_node.py stderr:\n{process.stderr.strip()}") # Use INFO for stderr too
+        log.info("Node initialization script completed successfully.")
         sys.exit(EXIT_SUCCESS)
 
     except subprocess.CalledProcessError as e:
-        logging.error(f"Node initialization script '{init_script_path}' failed with exit code {e.returncode}.")
-        logging.error(f"Stdout:\n{e.stdout}")
-        logging.error(f"Stderr:\n{e.stderr}")
-        # Don't terminate the experiment here, allow it to stay running
+        log.error(f"Node initialization script '{init_script_path}' failed (exit code {e.returncode}).")
+        log.error(f"Stdout:\n{e.stdout.strip()}")
+        log.error(f"Stderr:\n{e.stderr.strip()}")
         sys.exit(EXIT_FAILURE_NODE_INIT)
     except subprocess.TimeoutExpired as e:
-         logging.error(f"Node initialization script '{init_script_path}' timed out after {e.timeout} seconds.")
-         logging.error(f"Stdout:\n{e.stdout}")
-         logging.error(f"Stderr:\n{e.stderr}")
+         log.error(f"Node initialization script '{init_script_path}' timed out after {e.timeout} seconds.")
+         if e.stdout: log.error(f"Stdout:\n{e.stdout.strip()}")
+         if e.stderr: log.error(f"Stderr:\n{e.stderr.strip()}")
          sys.exit(EXIT_FAILURE_NODE_INIT)
     except FileNotFoundError:
-        logging.error(f"Error: Could not find the initialization script at {init_script_path}")
+        log.error(f"Initialization script not found at {init_script_path}")
         sys.exit(EXIT_FAILURE_NODE_INIT)
     except Exception as e:
-        logging.error(f"An unexpected error occurred while running init_node.py: {e}", exc_info=True)
+        log.error(f"An unexpected error occurred while running init_node.py: {e}", exc_info=True)
         sys.exit(EXIT_FAILURE_NODE_INIT)
 
 if __name__ == '__main__':
-    # Keep the experiment running even if init_node.py fails, so no explicit terminate here.
-    # Termination should be handled manually or by CloudLab's expiration.
+    # The experiment is intentionally left running after script execution.
+    # Termination should be handled manually or by CloudLab's expiration policy.
     run_experiment_lifecycle()

@@ -1,150 +1,198 @@
-# filepath: c:\Users\Tyler\workspace\Cluster\deploy_scripts\startup.sh
 #!/bin/bash
+#
+# Main startup script for the application deployment.
+# Assumes dependencies are installed by install_deps.sh and runs as 'ccuser'.
+# Requires PROD_* secret environment variables to be set.
+#
 set -e
 
-# Define LOG path early
-LOG="/local/logs/startup.log"
+# --- Configuration & Logging ---
+LOG_DIR="/local/logs"
+STARTUP_LOG="$LOG_DIR/startup.log"
+TUNNEL_LOG="$LOG_DIR/tunnel.log"
+SOCAT_80_LOG="$LOG_DIR/socat_80.log"
+KEEL_SOCAT_LOG="$LOG_DIR/keel_socat.log"
+REPO_DIR="/local/repository"
+HELM_DIR="$REPO_DIR/helm"
 
-# Restore complex redirection
-exec > >(tee -a "$LOG") 2>&1
+# Redirect all script output (stdout & stderr) to the startup log file
+exec > >(tee -a "$STARTUP_LOG") 2>&1
 
-echo "Startup script started at $(date)"
-echo "Current PATH: $PATH" # Log the PATH as seen by the script
+echo "--- Startup Script Started: $(date) ---"
+echo "User: $(whoami)"
+echo "Current Directory: $(pwd)"
+echo "Initial PATH: $PATH"
 
-# --- Check for required secrets early ---
+# --- Validate Secrets ---
 if [ -z "$PROD_ENCRYPTION_KEY" ] || [ -z "$PROD_REDIS_PASSWORD" ] || [ -z "$PROD_SESSION_SECRET" ]; then
-  echo "Error: Missing one or more required secret environment variables (PROD_ENCRYPTION_KEY, PROD_REDIS_PASSWORD, PROD_SESSION_SECRET)."
-  exit 1 # Exit if secrets aren't present
+  echo "ERROR: Missing one or more required secret environment variables (PROD_ENCRYPTION_KEY, PROD_REDIS_PASSWORD, PROD_SESSION_SECRET)."
+  exit 1
 fi
+echo "Required secrets validated."
 
-echo "🚀 Starting Minikube..."
+# --- Minikube Initialization ---
+echo "Starting Minikube cluster (driver: docker)..."
 minikube start --driver=docker
 
-echo "🔌 Enabling Ingress..."
+echo "Enabling Minikube Ingress addon..."
 minikube addons enable ingress
 
-echo "🔧 Patching ingress-nginx service to LoadBalancer..."
+echo "Patching ingress-nginx service type to LoadBalancer..."
+# This allows external access via the Minikube tunnel IP
 kubectl patch svc ingress-nginx-controller \
   -n ingress-nginx \
-  -p '{"spec": {"type": "LoadBalancer"}}'
+  -p '{"spec": {"type": "LoadBalancer"}}' \
+  --timeout=60s
 
-echo "⏱ Waiting for ingress-nginx-controller to be ready..."
+echo "Waiting for ingress-nginx controller pod to become ready..."
 kubectl wait --namespace ingress-nginx \
   --for=condition=ready pod \
   --selector=app.kubernetes.io/component=controller \
-  --timeout=90s
+  --timeout=120s
 
-echo "🌉 Starting Minikube tunnel..."
-# Rely on NOPASSWD for ccuser
-nohup sudo minikube tunnel > /local/logs/tunnel.log 2>&1 &
+# --- Network Forwarding ---
+echo "Starting Minikube tunnel in background (logs to $TUNNEL_LOG)..."
+# Requires passwordless sudo for 'ccuser' (configured in install_deps.sh)
+nohup sudo minikube tunnel > "$TUNNEL_LOG" 2>&1 &
+# Allow a few seconds for the tunnel process to establish
+sleep 5
 
-echo "🔁 Starting socat port forwards..."
-echo "🔁 Starting socat port forward from 80 -> 192.168.49.2:80..."
-setsid sudo socat TCP-LISTEN:80,fork TCP:192.168.49.2:80 </dev/null &>> /local/logs/socat_80.log &
+echo "Starting socat port forward (80 -> 192.168.49.2:80) in background (logs to $SOCAT_80_LOG)..."
+# Forwards host port 80 to the Minikube Ingress service IP (typically 192.168.49.2)
+setsid sudo socat TCP-LISTEN:80,fork TCP:192.168.49.2:80 </dev/null &>> "$SOCAT_80_LOG" &
+# Removed unused socat forward for 9030
 
-echo "🔁 Starting socat port forward from 9030 -> 192.168.49.2:9030..."
-setsid sudo socat TCP-LISTEN:9030,fork TCP:192.168.49.2:9030 </dev/null &>> /local/logs/socat_9030.log &
-
-echo "🐳 Configuring Docker to use Minikube's Docker daemon..."
+# --- Docker Environment ---
+echo "Configuring shell to use Minikube's Docker daemon..."
 eval $(minikube docker-env)
+# Verify docker context points to minikube
+docker info | grep -i "kubernetes.*minikube" || echo "WARNING: Docker context might not be set to Minikube."
 
+# --- Temporary Directory ---
+# Ensure TMPDIR is set and writable (should be configured by install_deps.sh)
 export TMPDIR=/var/tmp/ccuser-tmp
-# Permissions should be okay from install_deps.sh
-# sudo chown -R ccuser:ccuser /local/
-# sudo chmod -R 775 /local/
+if [ ! -d "$TMPDIR" ] || ! touch "$TMPDIR/.writable_test" 2>/dev/null; then
+    echo "ERROR: TMPDIR ($TMPDIR) is not writable or does not exist. Check install_deps.sh."
+    # Attempt recovery (permissions might be wrong)
+    sudo mkdir -p "$TMPDIR" && sudo chown "$(whoami):$(whoami)" "$TMPDIR" && sudo chmod 1777 "$TMPDIR"
+    if ! touch "$TMPDIR/.writable_test" 2>/dev/null; then
+        echo "ERROR: Failed to fix TMPDIR permissions."
+        exit 1
+    fi
+fi
+rm -f "$TMPDIR/.writable_test"
+echo "TMPDIR configured: $TMPDIR"
 
-echo "📦 Installing Keel separately via Helm..."
-# Redirect stdout and stderr of helm repo commands to the log file
-helm repo add keel https://charts.keel.sh >> "$LOG" 2>&1
-helm repo update >> "$LOG" 2>&1
-cd /local/repository/helm
-echo "Running helm upgrade for Keel..." # Add log before helm command
-# Redirect stdout and stderr of helm upgrade command to the log file
-helm upgrade --install keel keel/keel -n default -f keel-values.yaml >> "$LOG" 2>&1
-echo "Helm upgrade command finished." # Add log after helm command
+# --- Keel Installation (via Helm) ---
+echo "Installing/Updating Keel webhook via Helm..."
+helm repo add keel https://charts.keel.sh >> "$STARTUP_LOG" 2>&1 # Add repo quietly
+helm repo update >> "$STARTUP_LOG" 2>&1 # Update quietly
 
-echo "Waiting for the Keel deployment to become available (max 5 minutes)..."
+cd "$HELM_DIR" || { echo "ERROR: Failed to cd into Helm directory: $HELM_DIR"; exit 1; }
 
-# --- Replace kubectl rollout status ---
-# kubectl rollout status deployment/keel -n default --timeout=5m
+echo "Running 'helm upgrade --install keel'..."
+# Use helm upgrade --install for idempotency
+helm upgrade --install keel keel/keel \
+    -n default \
+    -f keel-values.yaml \
+    --timeout 5m # Add timeout to helm operation
+echo "Keel Helm operation finished."
 
-# --- Start Replacement Loop ---
+echo "Waiting for Keel deployment to become available (max 5 minutes)..."
+# Wait loop to check Keel deployment status
 attempts=0
-max_attempts=30 # 30 attempts * 10 seconds = 300 seconds = 5 minutes
+max_attempts=30 # 30 attempts * 10 seconds = 300 seconds
 deployment_name="keel"
 namespace="default"
 
 while [ $attempts -lt $max_attempts ]; do
-    # Check if the 'Available' condition is 'True'
+    # Check the 'Available' condition status
     status=$(kubectl get deployment $deployment_name -n $namespace -o jsonpath='{.status.conditions[?(@.type=="Available")].status}' 2>/dev/null)
 
     if [ "$status" == "True" ]; then
-        echo "Deployment $deployment_name in namespace $namespace is Available."
-        break # Exit the loop successfully
+        echo "Keel deployment '$deployment_name' in namespace '$namespace' is Available."
+        break # Success
     fi
 
-    # Optional: Check for progressing status to give more feedback
-    progressing_status=$(kubectl get deployment $deployment_name -n $namespace -o jsonpath='{.status.conditions[?(@.type=="Progressing")].status}' 2>/dev/null)
+    # Log current replica status for progress indication
     replicas=$(kubectl get deployment $deployment_name -n $namespace -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
     target_replicas=$(kubectl get deployment $deployment_name -n $namespace -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "1")
+    echo "Waiting for Keel deployment... Ready Replicas: ${replicas:-0}/${target_replicas:-1} (Attempt $((attempts+1))/$max_attempts)"
 
-    echo "Waiting for Keel deployment... Status: $status, Progressing: $progressing_status, Replicas: ${replicas:-0}/${target_replicas:-1} (Attempt $((attempts+1))/$max_attempts)"
     attempts=$((attempts+1))
     sleep 10
 done
 
+# Check if the loop timed out
 if [ $attempts -eq $max_attempts ]; then
-    echo "Error: Keel deployment $deployment_name did not become available after $max_attempts attempts."
-    # Optional: Dump deployment status for debugging
-    kubectl get deployment $deployment_name -n $namespace -o yaml
-    kubectl get pods -n $namespace -l app=keel # Assuming 'app=keel' is the correct label
-    exit 1 # Exit script due to timeout
+    echo "ERROR: Keel deployment '$deployment_name' did not become available within the timeout."
+    echo "--- Keel Deployment Status ---"
+    kubectl get deployment $deployment_name -n $namespace -o yaml || echo "Failed to get deployment YAML."
+    echo "--- Keel Pods ---"
+    # Assuming 'app=keel' is the correct label selector for Keel pods
+    kubectl get pods -n $namespace -l app=keel || echo "Failed to get Keel pods."
+    exit 1
 fi
-# --- End Replacement Loop ---
 
-echo "Keel deployment rollout status command finished."
+# --- Keel Service Forwarding ---
+echo "Retrieving Keel service IP..."
+# Allow some time for LoadBalancer IP assignment if applicable
+sleep 5
+SERVICE_IP=$(kubectl get svc -n default keel -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
 
-# --- Create Kubernetes Secret ---
-SECRET_NAME="campus-connect-config-secrets" # Matches the name used in backend-deployment.yaml and redis-deployment.yaml
-NAMESPACE="default" # Matches the namespace used in Helm chart
+# Fallback to ClusterIP if LoadBalancer IP is not available
+if [ -z "$SERVICE_IP" ]; then
+    echo "Keel LoadBalancer IP not found, attempting to use ClusterIP..."
+    SERVICE_IP=$(kubectl get svc -n default keel -o jsonpath='{.spec.clusterIP}' 2>/dev/null)
+    if [ -z "$SERVICE_IP" ]; then
+        echo "ERROR: Failed to get Keel service IP (LoadBalancer or ClusterIP)."
+        kubectl get svc -n default keel -o yaml # Log service details for debugging
+        exit 1
+    else
+       echo "Using Keel ClusterIP: $SERVICE_IP"
+    fi
+else
+    echo "Keel LoadBalancer IP: $SERVICE_IP"
+fi
 
-echo "🔐 Creating/Updating Kubernetes secret '$SECRET_NAME' in namespace '$NAMESPACE'..."
+echo "Forwarding port 9300 to Keel service ($SERVICE_IP:9300) in background (logs to $KEEL_SOCAT_LOG)..."
+setsid sudo socat TCP-LISTEN:9300,fork TCP:$SERVICE_IP:9300 </dev/null >> "$KEEL_SOCAT_LOG" 2>&1 &
 
-# Delete the secret first if it exists, ignore error if it doesn't
-kubectl delete secret $SECRET_NAME -n $NAMESPACE --ignore-not-found=true
+# --- Application Secrets ---
+SECRET_NAME="campus-connect-config-secrets"
+NAMESPACE="default"
+echo "Creating/Updating Kubernetes secret '$SECRET_NAME' in namespace '$NAMESPACE'..."
 
-# Create the secret using literal values from environment variables
+# Ensure clean state by deleting existing secret first (ignore if not found)
+kubectl delete secret $SECRET_NAME -n $NAMESPACE --ignore-not-found=true --timeout=60s
+
+# Create the secret using values from environment variables
 kubectl create secret generic $SECRET_NAME -n $NAMESPACE \
   --from-literal=ENCRYPTION_KEY="$PROD_ENCRYPTION_KEY" \
   --from-literal=REDIS_PASSWORD="$PROD_REDIS_PASSWORD" \
   --from-literal=SESSION_SECRET="$PROD_SESSION_SECRET"
 
-# Verify secret creation (optional but recommended)
-if kubectl get secret $SECRET_NAME -n $NAMESPACE > /dev/null; then
-  echo "✅ Kubernetes secret '$SECRET_NAME' created successfully."
-else
-  echo "❌ Error creating Kubernetes secret '$SECRET_NAME'. Check kubectl permissions and logs."
-  exit 1 # Exit if secret creation failed
+# Verify secret creation
+if ! kubectl get secret $SECRET_NAME -n $NAMESPACE > /dev/null; then
+  echo "ERROR: Failed to create or verify Kubernetes secret '$SECRET_NAME'."
+  exit 1
 fi
-# --- End Create Kubernetes Secret ---
+echo "Kubernetes secret '$SECRET_NAME' created successfully."
 
-echo "Proceeding to Skaffold deployment..." # Added log
+# --- Skaffold Deployment ---
+echo "Changing to repository directory: $REPO_DIR"
+cd "$REPO_DIR" || { echo "ERROR: Failed to cd into repository directory: $REPO_DIR"; exit 1; }
 
-echo "🚀 Deploying app with Skaffold..."
-cd /local/repository
+echo "Deploying application using Skaffold (profile: prod-deploy)..."
+# Run skaffold deploy with 'info' verbosity; output is already redirected to the main log
+skaffold deploy -p prod-deploy -v info
 
-echo "current directory: $(pwd)"
-echo "current user: $(whoami)"
-
-
-
-skaffold deploy -p prod-deploy -v info # Output already redirected by exec
-
-HOSTNAME=$(hostname -f)
+# --- Final Output ---
+HOSTNAME=$(hostname -f) # Get the fully qualified domain name
 
 echo ""
-echo "✅ All done! App should be accessible at: http://$HOSTNAME"
+echo "--- Deployment Process Complete ---"
+echo "Application should be accessible at: http://$HOSTNAME"
+echo "(Note: If $HOSTNAME is not resolvable externally, manual DNS or /etc/hosts configuration may be required on your client machine.)"
 echo ""
-
-# Add final success message
 echo "Startup script finished successfully at $(date)"

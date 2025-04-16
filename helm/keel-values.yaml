@@ -12,6 +12,8 @@ service:
 secret:
   create: true 
 
+# Will be migrated to secrets but for now just hardcoding admin and password. 
+# Probably would be hosting keel on 
 basicauth:
   enabled: true
   user: admin
