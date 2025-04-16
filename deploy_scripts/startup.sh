@@ -133,11 +133,7 @@ cd /local/repository
 echo "current directory: $(pwd)"
 echo "current user: $(whoami)"
 
---- REMOVED Secret Debug Logging ---
-echo "DEBUG: Checking secrets before Skaffold deploy:"
-echo "PROD_ENCRYPTION_KEY='${PROD_ENCRYPTION_KEY}'"
-echo "PROD_REDIS_PASSWORD='${PROD_REDIS_PASSWORD}'"
-echo "PROD_SESSION_SECRET='${PROD_SESSION_SECRET}'"
+
 
 # Skaffold deploy no longer needs secrets passed via setValueTemplates
 skaffold deploy -p prod-deploy -v debug # Output already redirected by exec
