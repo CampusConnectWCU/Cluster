@@ -201,12 +201,11 @@ def initialize_node(ip_address, is_deployed):
 
         # Use sudo -i -u ccuser to simulate login and source profile for PATH.
         # Prepend an explicit export of PATH so that minikube is found.
-        # Run install_deps.sh first and then startup.sh in sequence.
+        # Only run startup.sh, as install_deps.sh was run by profile.py and waited for.
         bash_command_to_execute = ("export PATH=/usr/local/bin:$PATH && "
                                    "source /home/ccuser/.profile && "
-                                   "bash /local/repository/deploy_scripts/install_deps.sh && "
-                                   "bash /local/repository/deploy_scripts/startup.sh")
-        
+                                   "bash /local/repository/deploy_scripts/startup.sh") # Removed install_deps.sh call
+
         if secret_env_vars:
             full_command = f"sudo -i -u ccuser env {secret_env_vars.strip()} bash -c '{bash_command_to_execute}'"
             debug_command = f"sudo -i -u ccuser env PROD_SESSION_SECRET=*** PROD_REDIS_PASSWORD=*** PROD_ENCRYPTION_KEY=*** bash -c '{bash_command_to_execute}'"
@@ -230,8 +229,8 @@ def initialize_node(ip_address, is_deployed):
             if "minikube: command not found" in output:
                  logging.error("Detected 'minikube: command not found' in output.")
                  # You could try logging the PATH again here if needed:
-                 # path_check_output = ssh_conn.command("sudo -i -u ccuser env bash -c 'echo $PATH'")
-                 # logging.error(f"PATH inside sudo -i -u ccuser: {path_check_output.strip()}")
+                 path_check_output = ssh_conn.command("sudo -i -u ccuser env bash -c 'echo $PATH'")
+                 logging.error(f"PATH inside sudo -i -u ccuser: {path_check_output.strip()}")
                  return EXIT_CMD_ERROR
             # if "Error:" in output or "failed" in output.lower():
             #     logging.error("Detected potential error in startup script output.")

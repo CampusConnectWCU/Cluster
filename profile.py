@@ -23,14 +23,5 @@ node.routable_control_ip = True
 bs = node.Blockstore("bs", "/mydata")
 bs.size = "20GB"
 
-# Run install + startup
-node.addService(pg.Execute(
-    shell="sh",
-    command=(
-        "sudo bash /local/repository/deploy_scripts/profile-startup.sh"
-
-    )
-))
-
 # Print request
 pc.printRequestRSpec(request)
