@@ -116,7 +116,7 @@ while [ $attempts -lt $max_attempts ]; do
     # Log current replica status for progress indication
     replicas=$(kubectl get deployment $deployment_name -n $namespace -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
     target_replicas=$(kubectl get deployment $deployment_name -n $namespace -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "1")
-    echo "Waiting for Keel deployment... Ready Replicas: ${replicas:-0}/${target_replicas:-1} (Attempt $((attempts+1))/$max_attempts)"
+    echo "Waiting for Keel deployment... Ready Replicas: ${replicas:-0}/${target_replicas:-1} (Attempt $((attempts+1))/$max_attempts)" 2>&1 &
 
     attempts=$((attempts+1))
     sleep 10

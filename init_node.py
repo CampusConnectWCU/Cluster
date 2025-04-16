@@ -64,7 +64,7 @@ def check_hostname(ip_address):
 def initialize_node(ip_address):
     """
     Performs first-time initialization of the node: installs dependencies
-    and runs the main startup script.
+    and runs the main startup script in the background.
     """
     log.info(f"Starting initialization process for node at IP: {ip_address}")
 
@@ -122,7 +122,7 @@ def initialize_node(ip_address):
              log.error(f"An unexpected error occurred during install script execution: {e}", exc_info=True)
              return EXIT_CMD_ERROR
 
-        # --- Execute Main Startup Script ---
+        # --- Execute Main Startup Script (in background) ---
         # Command runs startup.sh as 'ccuser', sourcing their profile and passing secrets
         # PATH is explicitly set to include /usr/local/bin where tools are installed
         startup_command_base = (
@@ -131,50 +131,45 @@ def initialize_node(ip_address):
             "[ -f /home/ccuser/.profile ] && source /home/ccuser/.profile ; "
             f"bash {startup_script_path}"
         )
-        startup_full_command = f"sudo -i -u ccuser env {secret_env_vars} bash -c '{startup_command_base}'"
-        startup_debug_command = f"sudo -i -u ccuser env {debug_secret_env_vars} bash -c '{startup_command_base}'" # For logging
+        # Wrap the sudo command in nohup and run in background (&)
+        # Redirect nohup's output to /dev/null as the script handles its own logging
+        startup_full_command = f"nohup sudo -i -u ccuser env {secret_env_vars} bash -c '{startup_command_base}' > /dev/null 2>&1 &"
+        startup_debug_command = f"nohup sudo -i -u ccuser env {debug_secret_env_vars} bash -c '{startup_command_base}' > /dev/null 2>&1 &" # For logging
 
-        log.info(f"Executing deployment startup script as ccuser: {startup_script_path}")
+        log.info(f"Executing deployment startup script in background as ccuser: {startup_script_path}")
         log.debug(f"Startup command (secrets redacted): {startup_debug_command}")
         try:
-            # Run startup.sh as ccuser
-            output_startup = ssh_conn.command(startup_full_command, timeout=1800) # 30 min timeout
-            log.info(f"Deployment script finished.")
-            log.debug(f"Startup script output:\n---\n{output_startup.strip()}\n---")
+            # Run startup.sh command. Expect prompt to return quickly.
+            # Reduce timeout significantly as we are not waiting for the script itself.
+            output_startup_launch = ssh_conn.command(startup_full_command, timeout=30)
+            log.info(f"Deployment script launched in background.")
+            # Log any immediate output before the prompt returned (usually none for background tasks)
+            if output_startup_launch.strip():
+                log.debug(f"Immediate output from launching startup script:\n---\n{output_startup_launch.strip()}\n---")
 
-            # Check for common errors in startup script output
-            if "minikube: command not found" in output_startup:
-                 log.error("Startup script failed: 'minikube: command not found'. Check PATH setup.")
-                 # Attempt to log the PATH as seen by the user for diagnostics
-                 try:
-                     path_check_output = ssh_conn.command("sudo -i -u ccuser env bash -c 'echo $PATH'")
-                     log.error(f"PATH inside 'sudo -i -u ccuser': {path_check_output.strip()}")
-                 except Exception as path_e:
-                     log.error(f"Could not retrieve PATH for debugging: {path_e}")
-                 return EXIT_CMD_ERROR
-            # Generic check for error indicators - review node logs for specifics
-            elif "Error:" in output_startup or "failed" in output_startup.lower():
-                 log.warning("Potential error indicators ('Error:', 'failed') found in startup script output. Review node logs for details.")
-                 # Consider making this fatal depending on expected script behavior
-                 # return EXIT_CMD_ERROR
+            # NOTE: We cannot check the output_startup for errors here as it runs in the background.
+            # Errors must be checked by inspecting the log file (/local/logs/startup.log) on the node itself.
 
         except TimeoutError:
-             log.error(f"Deployment script '{startup_script_path}' timed out after 1800 seconds.")
+             # This timeout means the prompt didn't return quickly after launching the background task.
+             log.error(f"Timeout waiting for prompt after launching background startup script.")
              return EXIT_CMD_ERROR
         except ConnectionAbortedError:
-             log.error(f"SSH connection aborted during deployment script execution.")
+             log.error(f"SSH connection aborted while launching deployment script.")
              return EXIT_CMD_ERROR
         except pssh.pexpect.exceptions.ExceptionPexpect as e:
-             log.error(f"pexpect exception during deployment script execution: {e}", exc_info=log.isEnabledFor(logging.DEBUG))
-             # Log output preceding the error if available
+             log.error(f"pexpect exception while launching deployment script: {e}", exc_info=log.isEnabledFor(logging.DEBUG))
              if hasattr(ssh_conn, 'ssh') and ssh_conn.ssh and not ssh_conn.ssh.closed:
                   log.error(f"Output before pexpect error:\n{ssh_conn.ssh.before.strip()}")
              return EXIT_CMD_ERROR
         except Exception as e:
-             log.error(f"An unexpected error occurred during startup script execution via SSH: {e}", exc_info=True)
+             log.error(f"An unexpected error occurred while launching startup script via SSH: {e}", exc_info=True)
              return EXIT_CMD_ERROR
 
-        log.info("Node initialization and deployment scripts completed successfully.")
+        # Since startup runs in the background, we don't wait here.
+        # The SSH connection will be closed in the finally block.
+        # Background processes started with nohup should continue running.
+        log.info("Node initialization script finished (startup script continues in background).")
         return EXIT_SUCCESS
 
     except (ValueError, FileNotFoundError, ConnectionError, ConnectionRefusedError, pssh.pexpect.exceptions.ExceptionPexpect) as e:
