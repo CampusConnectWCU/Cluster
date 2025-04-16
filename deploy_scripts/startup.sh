@@ -1,3 +1,4 @@
+# filepath: c:\Users\Tyler\workspace\Cluster\deploy_scripts\startup.sh
 #!/bin/bash
 set -e
 
@@ -9,6 +10,12 @@ exec > >(tee -a "$LOG") 2>&1
 
 echo "Startup script started at $(date)"
 echo "Current PATH: $PATH" # Log the PATH as seen by the script
+
+# --- Check for required secrets early ---
+if [ -z "$PROD_ENCRYPTION_KEY" ] || [ -z "$PROD_REDIS_PASSWORD" ] || [ -z "$PROD_SESSION_SECRET" ]; then
+  echo "Error: Missing one or more required secret environment variables (PROD_ENCRYPTION_KEY, PROD_REDIS_PASSWORD, PROD_SESSION_SECRET)."
+  exit 1 # Exit if secrets aren't present
+fi
 
 echo "🚀 Starting Minikube..."
 minikube start --driver=docker
@@ -94,6 +101,30 @@ fi
 
 echo "Keel deployment rollout status command finished."
 
+# --- Create Kubernetes Secret ---
+SECRET_NAME="campus-connect-config-secrets" # Matches the name used in backend-deployment.yaml and redis-deployment.yaml
+NAMESPACE="default" # Matches the namespace used in Helm chart
+
+echo "🔐 Creating/Updating Kubernetes secret '$SECRET_NAME' in namespace '$NAMESPACE'..."
+
+# Delete the secret first if it exists, ignore error if it doesn't
+kubectl delete secret $SECRET_NAME -n $NAMESPACE --ignore-not-found=true
+
+# Create the secret using literal values from environment variables
+kubectl create secret generic $SECRET_NAME -n $NAMESPACE \
+  --from-literal=ENCRYPTION_KEY="$PROD_ENCRYPTION_KEY" \
+  --from-literal=REDIS_PASSWORD="$PROD_REDIS_PASSWORD" \
+  --from-literal=SESSION_SECRET="$PROD_SESSION_SECRET"
+
+# Verify secret creation (optional but recommended)
+if kubectl get secret $SECRET_NAME -n $NAMESPACE > /dev/null; then
+  echo "✅ Kubernetes secret '$SECRET_NAME' created successfully."
+else
+  echo "❌ Error creating Kubernetes secret '$SECRET_NAME'. Check kubectl permissions and logs."
+  exit 1 # Exit if secret creation failed
+fi
+# --- End Create Kubernetes Secret ---
+
 echo "Proceeding to Skaffold deployment..." # Added log
 
 echo "🚀 Deploying app with Skaffold..."
@@ -102,12 +133,13 @@ cd /local/repository
 echo "current directory: $(pwd)"
 echo "current user: $(whoami)"
 
-
+--- REMOVED Secret Debug Logging ---
 echo "DEBUG: Checking secrets before Skaffold deploy:"
 echo "PROD_ENCRYPTION_KEY='${PROD_ENCRYPTION_KEY}'"
 echo "PROD_REDIS_PASSWORD='${PROD_REDIS_PASSWORD}'"
 echo "PROD_SESSION_SECRET='${PROD_SESSION_SECRET}'"
 
+# Skaffold deploy no longer needs secrets passed via setValueTemplates
 skaffold deploy -p prod-deploy -v debug # Output already redirected by exec
 
 HOSTNAME=$(hostname -f)

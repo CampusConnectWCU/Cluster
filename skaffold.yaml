@@ -84,6 +84,4 @@ profiles:
             setValueTemplates:
               domain: '{{cmd "hostname" "-f"}}'
               tagPolicy: "latest"
-              secrets.encryptionKey: '{{.PROD_ENCRYPTION_KEY}}'
-              secrets.redisPassword: '{{.PROD_REDIS_PASSWORD}}'
-              secrets.sessionSecret: '{{.PROD_SESSION_SECRET}}'
+
