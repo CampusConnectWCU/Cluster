@@ -37,7 +37,7 @@ def run_experiment_lifecycle():
     """
     Manages the Powder experiment lifecycle: ensures the experiment is ready
     and then executes the node initialization script, indicating if the
-    experiment was pre-existing.
+    experiment was pre-existing..
     """
     log.info(f"Starting experiment lifecycle for '{EXPERIMENT_NAME}' (Project: {PROJECT_NAME}, Profile: {PROFILE_NAME})")
 
