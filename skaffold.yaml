@@ -49,7 +49,7 @@ profiles:
             valuesFiles:
               - ./helm/values.prod.yaml
             setValueTemplates:
-              domain: '{{cmd "hostname" "-f"}}'
+              domain: "campusconnectwcu.com"
               tagPolicy: "latest"
     
   - name: prod-push
