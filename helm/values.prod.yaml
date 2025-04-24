@@ -45,6 +45,11 @@ ingress:
   annotations:
     kubernetes.io/ingress.class: "nginx"
     # Add other annotations if needed
+  # Add TLS configuration referencing the existing secret
+  tls:
+    - hosts:
+        - "{{ .Values.domain }}" # Use the domain value
+      secretName: campusconnect-tls # Name of the secret created in startup.sh
 
 configMap:
   name: campus-connect-config

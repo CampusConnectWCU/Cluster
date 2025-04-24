@@ -94,6 +94,17 @@ def initialize_node(ip_address):
     # Redacted version for logging
     debug_secret_env_vars = "PROD_SESSION_SECRET=*** PROD_REDIS_PASSWORD=*** PROD_ENCRYPTION_KEY=***"
 
+    # Format Base64 TLS secrets for passing via 'env' command
+    tls_env_vars = ""
+    debug_tls_env_vars = ""
+    if tls_cert_b64 and tls_key_b64:
+        # IMPORTANT: Ensure the strings are properly quoted for the shell 'env' command
+        tls_env_vars = f"TLS_CERT_B64='{tls_cert_b64}' TLS_KEY_B64='{tls_key_b64}'"
+        debug_tls_env_vars = "TLS_CERT_B64=*** TLS_KEY_B64=***"
+        log.info("Passing Base64 encoded TLS data to startup script via environment variables.")
+    else:
+        log.info("No Base64 TLS data provided, skipping TLS setup steps in startup script.")
+
     ssh_conn = None
     try:
         # Establish SSH connection (uses USER, CERT, KEYPWORD from env)
@@ -188,6 +199,8 @@ if __name__ == "__main__":
     parser.add_argument('--ip', required=True, help="IP address of the target node.")
     parser.add_argument('--isDeployed', action='store_true', help="Indicates the node is pre-existing; skips install/deploy.")
     parser.add_argument('--debug', action='store_true', help="Enable debug level logging.")
+    parser.add_argument('--tls-cert-b64', help="Base64 encoded TLS certificate chain.")
+    parser.add_argument('--tls-key-b64', help="Base64 encoded TLS private key.")
 
     # --- Environment Variable Check ---
     required_env_vars = ['USER', 'CERT', 'PROJECT_NAME', 'PROFILE_NAME',
@@ -206,6 +219,10 @@ if __name__ == "__main__":
     try:
         args = parser.parse_args()
 
+        if (args.tls_cert_b64 and not args.tls_key_b64) or (not args.tls_cert_b64 and args.tls_key_b64):
+             log.error("Both --tls-cert-b64 and --tls-key-b64 must be provided together.")
+             sys.exit(EXIT_ARG_ERROR)
+
         # Set logging level if --debug is passed
         if args.debug:
             logging.getLogger().setLevel(logging.DEBUG)
@@ -217,7 +234,7 @@ if __name__ == "__main__":
         if args.isDeployed:
             exit_code = check_hostname(args.ip)
         else:
-            exit_code = initialize_node(args.ip)
+            exit_code = initialize_node(args.ip, args.tls_cert_b64, args.tls_key_b64)
 
         log.info(f"Script finished with exit code {exit_code}.")
         sys.exit(exit_code)

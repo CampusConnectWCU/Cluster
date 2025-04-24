@@ -11,6 +11,7 @@ LOG_DIR="/local/logs"
 STARTUP_LOG="$LOG_DIR/startup.log"
 TUNNEL_LOG="$LOG_DIR/tunnel.log"
 SOCAT_80_LOG="$LOG_DIR/socat_80.log"
+SOCAT_443_LOG="$LOG_DIR/socat_443.log" 
 KEEL_SOCAT_LOG="$LOG_DIR/keel_socat.log"
 REPO_DIR="/local/repository"
 HELM_DIR="$REPO_DIR/helm"
@@ -59,7 +60,62 @@ sleep 5
 echo "Starting socat port forward (80 -> 192.168.49.2:80) in background (logs to $SOCAT_80_LOG)..."
 # Forwards host port 80 to the Minikube Ingress service IP (typically 192.168.49.2)
 setsid sudo socat TCP-LISTEN:80,fork TCP:192.168.49.2:80 </dev/null &>> "$SOCAT_80_LOG" &
-# Removed unused socat forward for 9030
+
+echo "Starting socat port forward (443 -> $MINIKUBE_IP:443) in background (logs to $SOCAT_443_LOG)..." # Added for HTTPS
+setsid sudo socat TCP-LISTEN:443,fork TCP:$MINIKUBE_IP:443 </dev/null &>> "$SOCAT_443_LOG" & # Added for HTTPS
+
+TLS_SECRET_NAME="campusconnect-tls" # Define secret name
+NAMESPACE="default"
+TEMP_TLS_KEY_PATH="$TMPDIR/tls.key" # Use TMPDIR for temp files
+TEMP_TLS_CERT_PATH="$TMPDIR/tls.crt"
+TLS_SETUP_DONE=false # Flag to track if TLS was configured
+
+# Clean up potential leftover temp files first
+rm -f "$TEMP_TLS_KEY_PATH" "$TEMP_TLS_CERT_PATH"
+
+if [ -n "$TLS_KEY_B64" ] && [ -n "$TLS_CERT_B64" ]; then
+    echo "TLS_KEY_B64 and TLS_CERT_B64 environment variables found. Decoding and creating Kubernetes TLS secret '$TLS_SECRET_NAME'..."
+
+    # Decode Base64 key and cert into temporary files
+    echo "Decoding Base64 key to $TEMP_TLS_KEY_PATH..."
+    echo "$TLS_KEY_B64" | base64 --decode > "$TEMP_TLS_KEY_PATH"
+    if [ $? -ne 0 ]; then echo "ERROR: Failed to decode Base64 TLS key."; rm -f "$TEMP_TLS_KEY_PATH"; exit 1; fi
+
+    echo "Decoding Base64 certificate to $TEMP_TLS_CERT_PATH..."
+    echo "$TLS_CERT_B64" | base64 --decode > "$TEMP_TLS_CERT_PATH"
+    if [ $? -ne 0 ]; then echo "ERROR: Failed to decode Base64 TLS certificate."; rm -f "$TEMP_TLS_KEY_PATH" "$TEMP_TLS_CERT_PATH"; exit 1; fi
+
+    # Set secure permissions for the temporary files
+    chmod 600 "$TEMP_TLS_KEY_PATH" "$TEMP_TLS_CERT_PATH"
+    echo "Temporary TLS files created and secured."
+
+    # Delete existing secret first (ignore if not found)
+    echo "Deleting existing secret '$TLS_SECRET_NAME' if present..."
+    kubectl delete secret $TLS_SECRET_NAME -n $NAMESPACE --ignore-not-found=true --timeout=60s
+
+    # Create the TLS secret from the temporary files
+    echo "Creating new secret '$TLS_SECRET_NAME' using temporary files..."
+    kubectl create secret tls $TLS_SECRET_NAME \
+        --key "$TEMP_TLS_KEY_PATH" \
+        --cert "$TEMP_TLS_CERT_PATH" \
+        -n $NAMESPACE
+
+    # Securely delete the temporary files immediately after use
+    echo "Cleaning up temporary TLS key and certificate files..."
+    rm -f "$TEMP_TLS_KEY_PATH" "$TEMP_TLS_CERT_PATH"
+    echo "Temporary TLS files removed."
+
+    # Verify secret creation
+    if ! kubectl get secret $TLS_SECRET_NAME -n $NAMESPACE > /dev/null; then
+        echo "ERROR: Failed to create or verify Kubernetes TLS secret '$TLS_SECRET_NAME'."
+        exit 1 # Exit if TLS secret creation fails
+    else
+        echo "Kubernetes TLS secret '$TLS_SECRET_NAME' created successfully."
+        TLS_SETUP_DONE=true # Mark TLS as configured
+    fi
+else
+    echo "TLS_KEY_B64 or TLS_CERT_B64 environment variables not set, skipping Kubernetes TLS secret creation."
+fi
 
 # --- Docker Environment ---
 echo "Configuring shell to use Minikube's Docker daemon..."

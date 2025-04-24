@@ -50,4 +50,6 @@ jobs:
         PROFILE_NAME: ${{ secrets.CLOUDLAB_PROFILE_NAME }}
         CERT: ./cloudlab.pem
         CLOUDLAB_PEM_BASE64: ${{ secrets.CLOUDLAB_PEM_BASE64 }}
+        SSL_CERT_B64: ${{ secrets.SSL_CERT_B64 }}
+        SSL_KEY_B64: ${{ secrets.SSL_KEY_B64 }}
 

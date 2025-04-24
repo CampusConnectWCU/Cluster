@@ -26,6 +26,8 @@ PROJECT_NAME = os.environ.get('PROJECT_NAME', DEFAULT_PROJECT_NAME)
 PROFILE_NAME = os.environ.get('PROFILE_NAME', DEFAULT_PROFILE_NAME)
 EXPERIMENT_NAME = 'prod' # Target experiment name
 TARGET_NODE_ID = 'deploy-node' # Client ID of the node to initialize
+SSL_CERT_B64 = os.environ.get('SSL_CERT_B64')
+SSL_KEY_B64 = os.environ.get('SSL_KEY_B64')
 
 # Exit Codes
 EXIT_SUCCESS = 0
@@ -86,9 +88,30 @@ def run_experiment_lifecycle():
     if was_already_deployed:
         log.info("Passing --isDeployed flag to initialization script.")
         command_list.append('--isDeployed')
+
+    if SSL_CERT_B64 and SSL_KEY_B64:
+        log.info("Passing Base64 encoded TLS certificate and key to init script.")
+        # Pass the actual encoded strings as arguments
+        command_list.extend(['--tls-cert-b64', SSL_CERT_B64])
+        command_list.extend(['--tls-key-b64', SSL_KEY_B64])
+    else:
+        log.warning("SSL_CERT_B64 and/or SSL_KEY_B64 environment variables not set. Proceeding without TLS setup.")
+
     # Add --debug flag to init_node.py if this script's logger is set to DEBUG
     if log.isEnabledFor(logging.DEBUG):
         command_list.append('--debug')
+
+    # Redact secrets from debug log
+    debug_command_list = list(command_list)
+    try:
+        cert_idx = debug_command_list.index('--tls-cert-b64')
+        debug_command_list[cert_idx + 1] = '***CERT_B64***'
+    except ValueError: pass
+    try:
+        key_idx = debug_command_list.index('--tls-key-b64')
+        debug_command_list[key_idx + 1] = '***KEY_B64***'
+    except ValueError: pass
+    log.debug(f"Executing command (secrets redacted): {' '.join(debug_command_list)}")
 
 
     log.debug(f"Executing command: {' '.join(command_list)}")
