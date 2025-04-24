@@ -61,6 +61,15 @@ echo "Starting socat port forward (80 -> 192.168.49.2:80) in background (logs to
 # Forwards host port 80 to the Minikube Ingress service IP (typically 192.168.49.2)
 setsid sudo socat TCP-LISTEN:80,fork TCP:192.168.49.2:80 </dev/null &>> "$SOCAT_80_LOG" &
 
+echo "Retrieving Minikube IP..."
+MINIKUBE_IP=$(minikube ip)
+if [ -z "$MINIKUBE_IP" ]; then
+  echo "ERROR: Failed to retrieve Minikube IP using 'minikube ip'."
+  exit 1
+fi
+echo "Minikube IP found: $MINIKUBE_IP"
+
+
 echo "Starting socat port forward (443 -> $MINIKUBE_IP:443) in background (logs to $SOCAT_443_LOG)..." # Added for HTTPS
 setsid sudo socat TCP-LISTEN:443,fork TCP:$MINIKUBE_IP:443 </dev/null &>> "$SOCAT_443_LOG" & # Added for HTTPS
 
