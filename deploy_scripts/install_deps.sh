@@ -98,6 +98,12 @@ chown "$USERNAME:$USERNAME" "$LOG_DIR/startup.log"
 chmod 664 "$LOG_DIR/startup.log" # User/group read/write
 echo "Log directory permissions updated for user '$USERNAME'."
 
+# TLS directory setup
+mkdir -p "/local/tls"
+chown "$USERNAME:$USERNAME" "/local/tls"
+chmod 775 "/local/tls" # User/group read/write/execute
+echo "TLS temporary directory configured: /local/tls"
+
 # --- Install Kubernetes Tools ---
 
 # Install Minikube

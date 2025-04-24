@@ -66,28 +66,32 @@ setsid sudo socat TCP-LISTEN:443,fork TCP:$MINIKUBE_IP:443 </dev/null &>> "$SOCA
 
 TLS_SECRET_NAME="campusconnect-tls" # Define secret name
 NAMESPACE="default"
-TEMP_TLS_KEY_PATH="$TMPDIR/tls.key" # Use TMPDIR for temp files
-TEMP_TLS_CERT_PATH="$TMPDIR/tls.crt"
+# Use the dedicated /local/tls directory
+TEMP_TLS_KEY_PATH="/local/tls/tls.key"
+TEMP_TLS_CERT_PATH="/local/tls/tls.crt"
 TLS_SETUP_DONE=false # Flag to track if TLS was configured
 
 # Clean up potential leftover temp files first
-rm -f "$TEMP_TLS_KEY_PATH" "$TEMP_TLS_CERT_PATH"
+# Use sudo rm for robustness, in case permissions were altered
+sudo rm -f "$TEMP_TLS_KEY_PATH" "$TEMP_TLS_CERT_PATH"
 
 if [ -n "$TLS_KEY_B64" ] && [ -n "$TLS_CERT_B64" ]; then
     echo "TLS_KEY_B64 and TLS_CERT_B64 environment variables found. Decoding and creating Kubernetes TLS secret '$TLS_SECRET_NAME'..."
 
-    # Decode Base64 key and cert into temporary files
+    # Decode Base64 key and cert into temporary files in /local/tls
     echo "Decoding Base64 key to $TEMP_TLS_KEY_PATH..."
+    # Directory permissions are set in install_deps.sh, ccuser should be able to write
     echo "$TLS_KEY_B64" | base64 --decode > "$TEMP_TLS_KEY_PATH"
-    if [ $? -ne 0 ]; then echo "ERROR: Failed to decode Base64 TLS key."; rm -f "$TEMP_TLS_KEY_PATH"; exit 1; fi
+    if [ $? -ne 0 ]; then echo "ERROR: Failed to decode Base64 TLS key."; sudo rm -f "$TEMP_TLS_KEY_PATH"; exit 1; fi
 
     echo "Decoding Base64 certificate to $TEMP_TLS_CERT_PATH..."
+    # Directory permissions are set in install_deps.sh, ccuser should be able to write
     echo "$TLS_CERT_B64" | base64 --decode > "$TEMP_TLS_CERT_PATH"
-    if [ $? -ne 0 ]; then echo "ERROR: Failed to decode Base64 TLS certificate."; rm -f "$TEMP_TLS_KEY_PATH" "$TEMP_TLS_CERT_PATH"; exit 1; fi
+    if [ $? -ne 0 ]; then echo "ERROR: Failed to decode Base64 TLS certificate."; sudo rm -f "$TEMP_TLS_KEY_PATH" "$TEMP_TLS_CERT_PATH"; exit 1; fi
 
-    # Set secure permissions for the temporary files
+    # Set secure permissions for the temporary files (readable by user only)
     chmod 600 "$TEMP_TLS_KEY_PATH" "$TEMP_TLS_CERT_PATH"
-    echo "Temporary TLS files created and secured."
+    echo "Temporary TLS files created and secured in /local/tls."
 
     # Delete existing secret first (ignore if not found)
     echo "Deleting existing secret '$TLS_SECRET_NAME' if present..."
@@ -101,8 +105,9 @@ if [ -n "$TLS_KEY_B64" ] && [ -n "$TLS_CERT_B64" ]; then
         -n $NAMESPACE
 
     # Securely delete the temporary files immediately after use
-    echo "Cleaning up temporary TLS key and certificate files..."
-    rm -f "$TEMP_TLS_KEY_PATH" "$TEMP_TLS_CERT_PATH"
+    echo "Cleaning up temporary TLS key and certificate files from /local/tls..."
+    # Use sudo rm for cleanup robustness
+    sudo rm -f "$TEMP_TLS_KEY_PATH" "$TEMP_TLS_CERT_PATH"
     echo "Temporary TLS files removed."
 
     # Verify secret creation
