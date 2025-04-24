@@ -61,7 +61,7 @@ def check_hostname(ip_address):
             ssh_conn.close()
 
 
-def initialize_node(ip_address):
+def initialize_node(ip_address, tls_cert_b64=None, tls_key_b64=None):
     """
     Performs first-time initialization of the node: installs dependencies
     and runs the main startup script in the background.
@@ -144,11 +144,11 @@ def initialize_node(ip_address):
         )
         # Wrap the sudo command in nohup and run in background (&)
         # Redirect nohup's output to /dev/null as the script handles its own logging
-        startup_full_command = f"nohup sudo -i -u ccuser env {secret_env_vars} bash -c '{startup_command_base}' > /dev/null 2>&1 &"
-        startup_debug_command = f"nohup sudo -i -u ccuser env {debug_secret_env_vars} bash -c '{startup_command_base}' > /dev/null 2>&1 &" # For logging
+        startup_full_command = f"nohup sudo -i -u ccuser env {secret_env_vars} {tls_env_vars} bash -c '{startup_command_base}' > /dev/null 2>&1 &" # Added tls_env_vars
+        startup_debug_command = f"nohup sudo -i -u ccuser env {debug_secret_env_vars} {debug_tls_env_vars} bash -c '{startup_command_base}' > /dev/null 2>&1 &" # Added debug_tls_env_vars
 
         log.info(f"Executing deployment startup script in background as ccuser: {startup_script_path}")
-        log.debug(f"Startup command (secrets redacted): {startup_debug_command}")
+        log.debug(f"Startup command (secrets/TLS redacted): {startup_debug_command}")
         try:
             # Run startup.sh command. Expect prompt to return quickly.
             # Reduce timeout significantly as we are not waiting for the script itself.
