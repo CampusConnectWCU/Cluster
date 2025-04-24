@@ -47,9 +47,8 @@ ingress:
     # Add other annotations if needed
   # Add TLS configuration referencing the existing secret
   tls:
-    - hosts:
-        - "{{ .Values.domain }}" # Use the domain value
-      secretName: campusconnect-tls # Name of the secret created in startup.sh
+    - secretName: campusconnect-tls # Name of the secret created in startup.sh
+      # hosts list removed - will be populated by template using .Values.domain
 
 configMap:
   name: campus-connect-config
