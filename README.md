@@ -18,3 +18,4 @@ https://github.com/CampusConnectWCU/cc-frontend
 https://github.com/CampusConnectWCU/cc-backend
 
 
+Deploy Trigger
